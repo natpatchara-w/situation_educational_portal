@@ -19,3 +19,14 @@ Verification:
 
 - `uv lock`
 - `uv run python backend/manage.py test resources`
+
+## SEC-01: Environment-driven deployment settings
+
+- Replaced hard-coded Django debug and secret settings with local/prod environment handling.
+- Added production cookie, HTTPS, proxy, host, CSRF trusted-origin, and security-header settings.
+- Added frontend `VITE_API_BASE_URL` support so split-origin production deployments do not hard-code HTTP localhost.
+- Started `CONFIGURE.md` with safe local and production configuration guidance.
+
+Verification:
+
+- `uv run python backend/manage.py test resources`

@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import "./styles.css";
 
-const API_BASE = `http://${window.location.hostname}:8000`;
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || `http://${window.location.hostname}:8000`).replace(/\/$/, "");
 const CATEGORIES = [
   { value: "", label: "All files" },
   { value: "checklist", label: "Volunteer Checklists" },
