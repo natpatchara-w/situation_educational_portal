@@ -18,7 +18,7 @@ from docx import Document
 
 from .checklist_generator import extract_docx_text
 from .cleanup import delete_expired_checklist_jobs
-from .models import ChecklistJob, OpenAISettings, Resource
+from .models import ChecklistJob, OpenAISettings, Resource, ThrottleRecord
 from .pdf_utils import build_simple_pdf
 
 
@@ -194,6 +194,23 @@ class ChecklistGeneratorApiTests(TestCase):
         response = self.client.post(reverse("api-checklist-job-create"), {"concept_note": upload})
 
         self.assertEqual(response.status_code, 403)
+
+    @override_settings(CHECKLIST_JOB_THROTTLE_LIMIT=1)
+    def test_checklist_job_create_is_throttled(self):
+        self.client.login(username="volunteer", password="test-password")
+        self.user.user_permissions.add(Permission.objects.get(codename="can_generate_checklist"))
+        OpenAISettings.objects.create(api_key="sk-test")
+
+        for _ in range(2):
+            upload = SimpleUploadedFile(
+                "concept-note.docx",
+                build_readable_docx("Marimba workshop for village students."),
+                content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+            with patch("resources.tasks.generate_checklist_job.delay"):
+                response = self.client.post(reverse("api-checklist-job-create"), {"concept_note": upload})
+
+        self.assertEqual(response.status_code, 429)
 
     def test_extract_docx_text_reads_paragraphs(self):
         upload = SimpleUploadedFile(
@@ -392,3 +409,33 @@ class ChecklistGeneratorApiTests(TestCase):
         self.assertFalse(ChecklistJob.objects.filter(id=expired_job.id).exists())
         self.assertFalse(Path(concept_path).exists())
         self.assertFalse(Path(pdf_path).exists())
+
+
+class ThrottleTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="volunteer", password="test-password")
+
+    @override_settings(LOGIN_THROTTLE_LIMIT=1)
+    def test_api_login_is_throttled(self):
+        first = self.client.post(
+            reverse("api-login"),
+            data=json.dumps({"username": "volunteer", "password": "wrong"}),
+            content_type="application/json",
+        )
+        second = self.client.post(
+            reverse("api-login"),
+            data=json.dumps({"username": "volunteer", "password": "wrong"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(first.status_code, 400)
+        self.assertEqual(second.status_code, 429)
+        self.assertTrue(ThrottleRecord.objects.filter(scope="api_login").exists())
+
+    @override_settings(ADMIN_LOGIN_THROTTLE_LIMIT=1)
+    def test_admin_login_is_throttled(self):
+        first = self.client.post("/admin/login/", {"username": "admin", "password": "wrong"})
+        second = self.client.post("/admin/login/", {"username": "admin", "password": "wrong"})
+
+        self.assertNotEqual(first.status_code, 429)
+        self.assertEqual(second.status_code, 429)

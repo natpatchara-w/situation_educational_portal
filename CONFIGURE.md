@@ -136,6 +136,17 @@ uv run celery -A volunteer_portal call resources.tasks.cleanup_expired_checklist
 uv run python backend/manage.py cleanup_checklist_jobs
 ```
 
+Throttle defaults can be tuned per deployment:
+
+```bash
+DJANGO_LOGIN_THROTTLE_LIMIT=5
+DJANGO_LOGIN_THROTTLE_WINDOW_SECONDS=300
+DJANGO_ADMIN_LOGIN_THROTTLE_LIMIT=5
+DJANGO_ADMIN_LOGIN_THROTTLE_WINDOW_SECONDS=300
+DJANGO_CHECKLIST_JOB_THROTTLE_LIMIT=10
+DJANGO_CHECKLIST_JOB_THROTTLE_WINDOW_SECONDS=3600
+```
+
 Deployment verification:
 
 ```bash

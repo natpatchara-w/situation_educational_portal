@@ -31,6 +31,16 @@ Verification:
 
 - `uv run python backend/manage.py test resources`
 
+## SEC-07: Database-backed throttling
+
+- Added hashed database throttle records for API login, admin login, and checklist job creation.
+- Added environment-tunable throttle limits and windows.
+- Reset API login throttles after successful authentication.
+
+Verification:
+
+- `uv run python backend/manage.py test resources`
+
 ## SEC-05: Upload size and DOCX safety limits
 
 - Added shared upload validation for file size, DOCX structure, zip entry count, uncompressed size, and compression ratio.

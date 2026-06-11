@@ -100,3 +100,19 @@ class ChecklistJob(models.Model):
 
     def __str__(self):
         return self.input_filename
+
+
+class ThrottleRecord(models.Model):
+    scope = models.CharField(max_length=64)
+    key_hash = models.CharField(max_length=64)
+    attempts = models.PositiveIntegerField(default=0)
+    first_attempt_at = models.DateTimeField()
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["scope", "key_hash"], name="unique_throttle_scope_key"),
+        ]
+
+    def __str__(self):
+        return f"{self.scope}:{self.key_hash[:8]}"

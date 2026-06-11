@@ -63,6 +63,7 @@ MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
+    "resources.middleware.DatabaseLoginThrottleMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
@@ -146,6 +147,12 @@ CELERY_TASK_ALWAYS_EAGER = env_bool("CELERY_TASK_ALWAYS_EAGER", False)
 CELERY_TASK_TIME_LIMIT = env_int("CELERY_TASK_TIME_LIMIT", 180)
 CELERY_TASK_SOFT_TIME_LIMIT = env_int("CELERY_TASK_SOFT_TIME_LIMIT", 150)
 CHECKLIST_JOB_CLEANUP_BATCH_SIZE = env_int("DJANGO_CHECKLIST_JOB_CLEANUP_BATCH_SIZE", 100)
+LOGIN_THROTTLE_LIMIT = env_int("DJANGO_LOGIN_THROTTLE_LIMIT", 5)
+LOGIN_THROTTLE_WINDOW_SECONDS = env_int("DJANGO_LOGIN_THROTTLE_WINDOW_SECONDS", 300)
+ADMIN_LOGIN_THROTTLE_LIMIT = env_int("DJANGO_ADMIN_LOGIN_THROTTLE_LIMIT", 5)
+ADMIN_LOGIN_THROTTLE_WINDOW_SECONDS = env_int("DJANGO_ADMIN_LOGIN_THROTTLE_WINDOW_SECONDS", 300)
+CHECKLIST_JOB_THROTTLE_LIMIT = env_int("DJANGO_CHECKLIST_JOB_THROTTLE_LIMIT", 10)
+CHECKLIST_JOB_THROTTLE_WINDOW_SECONDS = env_int("DJANGO_CHECKLIST_JOB_THROTTLE_WINDOW_SECONDS", 3600)
 
 if env_bool("DJANGO_USE_X_FORWARDED_PROTO", IS_PRODUCTION):
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")

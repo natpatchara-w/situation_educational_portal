@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
 from django.db.models import Q
 from django.http import FileResponse, Http404, JsonResponse
@@ -11,6 +12,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from .models import ChecklistJob, OpenAISettings, Resource
 from .tasks import generate_checklist_job
+from .throttling import client_ip, is_throttled, reset_throttle, throttle_key
 
 
 CONTENT_TYPES = {
@@ -53,11 +55,16 @@ def login_view(request):
 
     username = payload.get("username", "")
     password = payload.get("password", "")
+    key_hash = throttle_key(client_ip(request), username)
+    if is_throttled("api_login", key_hash, settings.LOGIN_THROTTLE_LIMIT, settings.LOGIN_THROTTLE_WINDOW_SECONDS):
+        return JsonResponse({"detail": "Too many login attempts. Try again later."}, status=429)
+
     user = authenticate(request, username=username, password=password)
 
     if user is None:
         return JsonResponse({"detail": "Invalid username or password."}, status=400)
 
+    reset_throttle("api_login", key_hash)
     login(request, user)
     return JsonResponse(_serialize_user(user))
 
@@ -143,6 +150,15 @@ def checklist_job_list(request):
 @require_POST
 @csrf_protect
 def checklist_job_create(request):
+    key_hash = throttle_key(request.user.pk)
+    if is_throttled(
+        "checklist_job_create",
+        key_hash,
+        settings.CHECKLIST_JOB_THROTTLE_LIMIT,
+        settings.CHECKLIST_JOB_THROTTLE_WINDOW_SECONDS,
+    ):
+        return JsonResponse({"detail": "Checklist generation limit reached. Try again later."}, status=429)
+
     concept_note = request.FILES.get("concept_note")
     if concept_note is None:
         return JsonResponse({"detail": "Upload a DOCX Event Concept Note."}, status=400)
