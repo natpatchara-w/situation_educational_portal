@@ -9,6 +9,10 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import ListFlowable, ListItem, Paragraph, SimpleDocTemplate, Spacer
+from django.conf import settings
+from django.core.exceptions import ValidationError
+
+from .upload_validation import validate_docx_archive, validate_file_size
 
 
 class ChecklistGenerationError(Exception):
@@ -68,7 +72,13 @@ def extract_docx_text(uploaded_file):
         raise InvalidConceptNoteError("Upload a DOCX Event Concept Note.")
 
     try:
+        validate_file_size(uploaded_file, settings.CHECKLIST_MAX_UPLOAD_BYTES, "Event Concept Note")
+        validate_docx_archive(uploaded_file)
+        uploaded_file.seek(0)
         document = Document(uploaded_file)
+    except ValidationError as exc:
+        message = exc.messages[0] if getattr(exc, "messages", None) else str(exc)
+        raise InvalidConceptNoteError(message) from exc
     except Exception as exc:
         raise InvalidConceptNoteError("Upload a readable DOCX Event Concept Note.") from exc
 

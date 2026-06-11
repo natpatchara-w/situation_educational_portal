@@ -1,5 +1,4 @@
 from pathlib import Path
-from zipfile import BadZipFile, ZipFile
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -7,6 +6,7 @@ from django.core.validators import FileExtensionValidator
 from django.db import models
 
 from .fields import EncryptedTextField
+from .upload_validation import validate_docx_archive, validate_file_size
 
 
 def validate_resource_file(uploaded_file):
@@ -15,18 +15,12 @@ def validate_resource_file(uploaded_file):
     uploaded_file.seek(0)
 
     try:
+        validate_file_size(uploaded_file, settings.RESOURCE_MAX_UPLOAD_BYTES, "Resource file")
         if extension == ".pdf":
             if uploaded_file.read(5) != b"%PDF-":
                 raise ValidationError("Upload a valid PDF file.")
         elif extension == ".docx":
-            try:
-                with ZipFile(uploaded_file) as archive:
-                    names = set(archive.namelist())
-            except BadZipFile as exc:
-                raise ValidationError("Upload a valid DOCX file.") from exc
-
-            if "[Content_Types].xml" not in names or "word/document.xml" not in names:
-                raise ValidationError("Upload a valid DOCX file.")
+            validate_docx_archive(uploaded_file)
         else:
             raise ValidationError("Upload a PDF or DOCX file.")
     finally:

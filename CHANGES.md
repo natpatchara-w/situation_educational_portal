@@ -20,6 +20,16 @@ Verification:
 - `uv lock`
 - `uv run python backend/manage.py test resources`
 
+## SEC-05: Upload size and DOCX safety limits
+
+- Added shared upload validation for file size, DOCX structure, zip entry count, uncompressed size, and compression ratio.
+- Applied the checks to admin resource uploads and checklist concept-note uploads.
+- Added environment-tunable upload limits for local and production deployments.
+
+Verification:
+
+- `uv run python backend/manage.py test resources`
+
 ## SEC-01: Environment-driven deployment settings
 
 - Replaced hard-coded Django debug and secret settings with local/prod environment handling.

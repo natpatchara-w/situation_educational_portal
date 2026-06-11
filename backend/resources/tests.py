@@ -10,7 +10,7 @@ from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from django.urls import reverse
 from docx import Document
@@ -160,6 +160,17 @@ class ResourceApiTests(TestCase):
         with self.assertRaises(ValidationError):
             resource.full_clean()
 
+    @override_settings(RESOURCE_MAX_UPLOAD_BYTES=8)
+    def test_resource_upload_rejects_oversized_file(self):
+        resource = Resource(
+            title="Large PDF",
+            category=Resource.Category.CHECKLIST,
+            pdf_file=SimpleUploadedFile("large.pdf", b"%PDF-" + b"x" * 20, content_type="application/pdf"),
+        )
+
+        with self.assertRaises(ValidationError):
+            resource.full_clean()
+
 
 class ChecklistGeneratorApiTests(TestCase):
     def setUp(self):
@@ -252,7 +263,37 @@ class ChecklistGeneratorApiTests(TestCase):
         response = self.client.post(reverse("api-checklist-generate"), {"concept_note": upload})
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn("readable DOCX", response.json()["detail"])
+        self.assertIn("valid DOCX", response.json()["detail"])
+
+    @override_settings(CHECKLIST_MAX_UPLOAD_BYTES=8)
+    def test_generate_checklist_rejects_oversized_docx(self):
+        self.client.login(username="volunteer", password="test-password")
+        self.user.user_permissions.add(Permission.objects.get(codename="can_generate_checklist"))
+        upload = SimpleUploadedFile(
+            "large.docx",
+            build_readable_docx("Large concept note."),
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+
+        response = self.client.post(reverse("api-checklist-generate"), {"concept_note": upload})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Event Concept Note must be", response.json()["detail"])
+
+    @override_settings(DOCX_MAX_COMPRESSION_RATIO=1)
+    def test_generate_checklist_rejects_high_compression_docx(self):
+        self.client.login(username="volunteer", password="test-password")
+        self.user.user_permissions.add(Permission.objects.get(codename="can_generate_checklist"))
+        upload = SimpleUploadedFile(
+            "compressed.docx",
+            build_readable_docx("A" * 2000),
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+
+        response = self.client.post(reverse("api-checklist-generate"), {"concept_note": upload})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("compression ratio", response.json()["detail"])
 
     def test_generate_checklist_rejects_empty_docx(self):
         self.client.login(username="volunteer", password="test-password")

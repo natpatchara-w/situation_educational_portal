@@ -185,7 +185,6 @@ def checklist_job_create(request):
 
     try:
         with job.concept_note.open("rb") as uploaded_file:
-            uploaded_file.name = job.input_filename
             concept_note_text = extract_docx_text(uploaded_file)
         payload = generate_checklist_payload(concept_note_text, settings.api_key.strip())
         pdf = render_checklist_pdf(payload)
