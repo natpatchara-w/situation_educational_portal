@@ -1,0 +1,358 @@
+:root {
+  color: #17211b;
+  background: #f4f7f1;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  line-height: 1.5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.app-shell {
+  width: min(1180px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 32px 0 48px;
+}
+
+.topbar,
+.controls,
+.summary-band {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.topbar {
+  margin-bottom: 24px;
+}
+
+.eyebrow {
+  margin: 0 0 6px;
+  color: #42614d;
+  font-size: 0.79rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+p {
+  overflow-wrap: anywhere;
+}
+
+h1 {
+  margin: 0;
+  max-width: 780px;
+  font-size: clamp(2rem, 6vw, 4.2rem);
+  line-height: 0.98;
+}
+
+.summary-band {
+  margin-bottom: 24px;
+  padding: 18px;
+  background: #ffffff;
+  border: 1px solid #dce7da;
+  border-radius: 8px;
+}
+
+.summary-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1;
+}
+
+.summary-item span {
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  color: #0f5f4b;
+  background: #dff1e8;
+  border-radius: 8px;
+}
+
+.summary-item strong {
+  display: block;
+  font-size: 1.5rem;
+}
+
+.summary-item p {
+  margin: 0;
+  color: #5a695f;
+}
+
+.controls {
+  align-items: stretch;
+  margin-bottom: 22px;
+}
+
+.search-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: min(420px, 100%);
+  padding: 0 14px;
+  background: #ffffff;
+  border: 1px solid #cfdcd1;
+  border-radius: 8px;
+}
+
+.search-field input {
+  width: 100%;
+  min-height: 48px;
+  border: 0;
+  outline: 0;
+}
+
+.segmented-control {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.segmented-control button,
+.ghost-button,
+.primary-button,
+.download-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  text-decoration: none;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
+}
+
+.segmented-control button {
+  padding: 0 14px;
+  color: #324139;
+  background: #ffffff;
+  border-color: #cfdcd1;
+}
+
+.segmented-control button.active,
+.primary-button,
+.download-button {
+  color: #ffffff;
+  background: #0f5f4b;
+  border-color: #0f5f4b;
+}
+
+.ghost-button {
+  padding: 0 14px;
+  color: #26352d;
+  background: #ffffff;
+  border-color: #cfdcd1;
+}
+
+.resource-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 310px), 1fr));
+  gap: 16px;
+}
+
+.resource-card,
+.empty-state,
+.login-panel {
+  background: #ffffff;
+  border: 1px solid #dce7da;
+  border-radius: 8px;
+  box-shadow: 0 18px 40px rgba(34, 55, 41, 0.08);
+}
+
+.resource-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 260px;
+  padding: 18px;
+}
+
+.card-header,
+.card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.category-pill {
+  display: inline-flex;
+  max-width: 100%;
+  padding: 5px 9px;
+  color: #20513f;
+  background: #e7f4ec;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.file-type {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  min-height: 28px;
+  margin-right: auto;
+  padding: 4px 8px;
+  color: #31443b;
+  background: #f2f5ef;
+  border: 1px solid #dce7da;
+  border-radius: 8px;
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.category-pill.educational {
+  color: #4e3b0a;
+  background: #f6e8be;
+}
+
+.resource-card h2 {
+  margin: 18px 0 8px;
+  font-size: 1.24rem;
+  line-height: 1.18;
+}
+
+.resource-card p {
+  margin: 0;
+  color: #596961;
+}
+
+.card-footer {
+  margin-top: auto;
+  padding-top: 18px;
+  color: #6f7a73;
+  font-size: 0.92rem;
+}
+
+.download-button {
+  padding: 0 12px;
+  flex: 0 0 auto;
+}
+
+.empty-state,
+.status-screen {
+  display: grid;
+  place-items: center;
+  min-height: 280px;
+  padding: 32px;
+  text-align: center;
+}
+
+.empty-state h2 {
+  margin: 12px 0 4px;
+}
+
+.empty-state p,
+.notice {
+  margin: 0;
+  color: #596961;
+}
+
+.notice {
+  margin-bottom: 16px;
+}
+
+.notice.error {
+  color: #a23828;
+}
+
+.login-page,
+.status-screen {
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.login-page {
+  display: grid;
+  place-items: center;
+  background:
+    linear-gradient(rgba(244, 247, 241, 0.82), rgba(244, 247, 241, 0.92)),
+    url("https://images.unsplash.com/photo-1521737604893-d14cc237f11d?auto=format&fit=crop&w=1600&q=80");
+  background-size: cover;
+  background-position: center;
+}
+
+.login-panel {
+  width: min(100%, 440px);
+  padding: 28px;
+}
+
+.login-panel h1 {
+  margin-bottom: 22px;
+  font-size: clamp(2rem, 8vw, 3rem);
+}
+
+.login-panel form {
+  display: grid;
+  gap: 14px;
+}
+
+.login-panel label {
+  display: grid;
+  gap: 7px;
+  color: #38473e;
+  font-weight: 700;
+}
+
+.login-panel input {
+  min-height: 46px;
+  padding: 0 12px;
+  border: 1px solid #cfdcd1;
+  border-radius: 8px;
+}
+
+.primary-button {
+  width: 100%;
+  margin-top: 4px;
+}
+
+.primary-button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    width: min(100% - 24px, 1180px);
+    padding-top: 20px;
+  }
+
+  .topbar,
+  .controls,
+  .summary-band,
+  .card-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .summary-item,
+  .download-button,
+  .ghost-button {
+    width: 100%;
+  }
+}

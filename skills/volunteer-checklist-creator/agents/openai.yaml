@@ -1,0 +1,4 @@
+interface:
+  display_name: "Volunteer Checklist Creator"
+  short_description: "Create volunteer preparation checklists"
+  default_prompt: "Use $volunteer-checklist-creator to create a preparation document and checklist for student volunteers from this event page."
