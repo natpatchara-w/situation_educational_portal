@@ -47,6 +47,8 @@ DJANGO_FIELD_ENCRYPTION_KEY=<fernet-key>
 DJANGO_ALLOWED_HOSTS=api.example.org
 DJANGO_FRONTEND_ORIGINS=https://portal.example.org
 DJANGO_CSRF_TRUSTED_ORIGINS=https://portal.example.org
+CELERY_BROKER_URL=redis://redis.example.org:6379/0
+CELERY_RESULT_BACKEND=redis://redis.example.org:6379/0
 ```
 
 Generate an encryption key for encrypted application secrets:
@@ -56,6 +58,25 @@ uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_
 ```
 
 Keep `DJANGO_FIELD_ENCRYPTION_KEY` stable for the lifetime of encrypted database values. Rotate it only with a planned re-encryption migration.
+
+Run a Celery worker anywhere checklist generation should execute:
+
+```bash
+uv run celery -A volunteer_portal worker --workdir backend --loglevel INFO
+```
+
+For local development with Redis on localhost:
+
+```bash
+redis-server
+uv run celery -A volunteer_portal worker --workdir backend --loglevel INFO
+```
+
+Use eager mode only for tests or isolated debugging:
+
+```bash
+CELERY_TASK_ALWAYS_EAGER=true
+```
 
 Recommended TLS/proxy variables when Django is behind a trusted HTTPS proxy:
 

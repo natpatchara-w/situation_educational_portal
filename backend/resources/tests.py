@@ -205,40 +205,14 @@ class ChecklistGeneratorApiTests(TestCase):
         self.assertIn("Event Concept Note", text)
         self.assertIn("Marimba workshop", text)
 
-    def test_generate_checklist_returns_pdf(self):
+    def test_generate_checklist_endpoint_requires_queue_endpoint(self):
         self.client.login(username="volunteer", password="test-password")
         self.user.user_permissions.add(Permission.objects.get(codename="can_generate_checklist"))
-        OpenAISettings.objects.create(api_key="sk-test")
-        upload = SimpleUploadedFile(
-            "concept-note.docx",
-            build_readable_docx("Marimba workshop for village students."),
-            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        )
-        output_text = json.dumps(
-            {
-                "event_title": "Marimba Workshop",
-                "source_note": "Generated from uploaded Event Concept Note.",
-                "sections": [
-                    {
-                        "title": "Quick checklist",
-                        "items": ["Confirm with organizer: meeting point.", "Bring water and notebook."],
-                    }
-                ],
-            }
-        )
 
-        with patch("resources.checklist_generator.OpenAI") as openai:
-            openai.return_value.responses.create.return_value = SimpleNamespace(output_text=output_text)
-            response = self.client.post(reverse("api-checklist-generate"), {"concept_note": upload})
+        response = self.client.post(reverse("api-checklist-generate"))
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response["Content-Type"], "application/pdf")
-        self.assertIn("attachment", response["Content-Disposition"])
-        self.assertTrue(response.content.startswith(b"%PDF-"))
-        openai.return_value.responses.create.assert_called_once()
-        call_kwargs = openai.return_value.responses.create.call_args.kwargs
-        self.assertEqual(call_kwargs["model"], "gpt-5.5")
-        self.assertEqual(call_kwargs["reasoning"], {"effort": "medium"})
+        self.assertEqual(response.status_code, 410)
+        self.assertIn("queued", response.json()["detail"])
 
     def test_openai_api_key_is_encrypted_at_rest(self):
         settings = OpenAISettings.objects.create(api_key="sk-test")
@@ -260,10 +234,13 @@ class ChecklistGeneratorApiTests(TestCase):
             content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
 
-        response = self.client.post(reverse("api-checklist-generate"), {"concept_note": upload})
+        with self.settings(CELERY_TASK_ALWAYS_EAGER=True):
+            response = self.client.post(reverse("api-checklist-job-create"), {"concept_note": upload})
 
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("valid DOCX", response.json()["detail"])
+        self.assertEqual(response.status_code, 202)
+        job = ChecklistJob.objects.get()
+        self.assertEqual(job.status, ChecklistJob.Status.ERROR)
+        self.assertIn("valid DOCX", job.error_message)
 
     @override_settings(CHECKLIST_MAX_UPLOAD_BYTES=8)
     def test_generate_checklist_rejects_oversized_docx(self):
@@ -275,10 +252,13 @@ class ChecklistGeneratorApiTests(TestCase):
             content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
 
-        response = self.client.post(reverse("api-checklist-generate"), {"concept_note": upload})
+        with self.settings(CELERY_TASK_ALWAYS_EAGER=True):
+            response = self.client.post(reverse("api-checklist-job-create"), {"concept_note": upload})
 
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("Event Concept Note must be", response.json()["detail"])
+        self.assertEqual(response.status_code, 202)
+        job = ChecklistJob.objects.get()
+        self.assertEqual(job.status, ChecklistJob.Status.ERROR)
+        self.assertIn("Event Concept Note must be", job.error_message)
 
     @override_settings(DOCX_MAX_COMPRESSION_RATIO=1)
     def test_generate_checklist_rejects_high_compression_docx(self):
@@ -290,10 +270,13 @@ class ChecklistGeneratorApiTests(TestCase):
             content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
 
-        response = self.client.post(reverse("api-checklist-generate"), {"concept_note": upload})
+        with self.settings(CELERY_TASK_ALWAYS_EAGER=True):
+            response = self.client.post(reverse("api-checklist-job-create"), {"concept_note": upload})
 
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("compression ratio", response.json()["detail"])
+        self.assertEqual(response.status_code, 202)
+        job = ChecklistJob.objects.get()
+        self.assertEqual(job.status, ChecklistJob.Status.ERROR)
+        self.assertIn("compression ratio", job.error_message)
 
     def test_generate_checklist_rejects_empty_docx(self):
         self.client.login(username="volunteer", password="test-password")
@@ -304,10 +287,13 @@ class ChecklistGeneratorApiTests(TestCase):
             content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
 
-        response = self.client.post(reverse("api-checklist-generate"), {"concept_note": upload})
+        with self.settings(CELERY_TASK_ALWAYS_EAGER=True):
+            response = self.client.post(reverse("api-checklist-job-create"), {"concept_note": upload})
 
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("does not contain readable text", response.json()["detail"])
+        self.assertEqual(response.status_code, 202)
+        job = ChecklistJob.objects.get()
+        self.assertEqual(job.status, ChecklistJob.Status.ERROR)
+        self.assertIn("does not contain readable text", job.error_message)
 
     def test_generate_checklist_requires_openai_key(self):
         self.client.login(username="volunteer", password="test-password")
@@ -318,10 +304,13 @@ class ChecklistGeneratorApiTests(TestCase):
             content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
 
-        response = self.client.post(reverse("api-checklist-generate"), {"concept_note": upload})
+        with self.settings(CELERY_TASK_ALWAYS_EAGER=True):
+            response = self.client.post(reverse("api-checklist-job-create"), {"concept_note": upload})
 
-        self.assertEqual(response.status_code, 503)
-        self.assertIn("OpenAI API key is not configured", response.json()["detail"])
+        self.assertEqual(response.status_code, 202)
+        job = ChecklistJob.objects.get()
+        self.assertEqual(job.status, ChecklistJob.Status.ERROR)
+        self.assertIn("OpenAI API key is not configured", job.error_message)
 
     def test_create_checklist_job_persists_pdf_for_preview_and_download(self):
         self.client.login(username="volunteer", password="test-password")
@@ -340,11 +329,12 @@ class ChecklistGeneratorApiTests(TestCase):
             }
         )
 
-        with patch("resources.checklist_generator.OpenAI") as openai:
-            openai.return_value.responses.create.return_value = SimpleNamespace(output_text=output_text)
-            response = self.client.post(reverse("api-checklist-job-create"), {"concept_note": upload})
+        with self.settings(CELERY_TASK_ALWAYS_EAGER=True):
+            with patch("resources.checklist_generator.OpenAI") as openai:
+                openai.return_value.responses.create.return_value = SimpleNamespace(output_text=output_text)
+                response = self.client.post(reverse("api-checklist-job-create"), {"concept_note": upload})
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 202)
         job_payload = response.json()["job"]
         self.assertEqual(job_payload["status"], "done")
         self.assertTrue(job_payload["previewUrl"])

@@ -74,6 +74,7 @@ class OpenAISettings(models.Model):
 
 class ChecklistJob(models.Model):
     class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
         PROCESSING = "processing", "Processing"
         DONE = "done", "Done"
         ERROR = "error", "Error"
@@ -83,7 +84,7 @@ class ChecklistJob(models.Model):
     output_filename = models.CharField(max_length=255, blank=True)
     concept_note = models.FileField(upload_to="checklist_jobs/concept_notes/")
     generated_pdf = models.FileField(upload_to="checklist_jobs/pdfs/", blank=True)
-    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PROCESSING)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     error_message = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

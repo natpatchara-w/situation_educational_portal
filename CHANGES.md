@@ -30,6 +30,19 @@ Verification:
 
 - `uv run python backend/manage.py test resources`
 
+## SEC-06: Asynchronous checklist generation
+
+- Added Celery and Redis dependencies plus a Django Celery app.
+- Changed checklist job creation to enqueue a background generation task and return `202 Accepted`.
+- Moved OpenAI calls and PDF rendering into the Celery task so web requests no longer perform expensive generation work.
+- Deprecated the synchronous checklist generation endpoint with an explicit queued-endpoint response.
+- Added worker configuration guidance.
+
+Verification:
+
+- `uv lock`
+- `uv run python backend/manage.py test resources`
+
 ## SEC-01: Environment-driven deployment settings
 
 - Replaced hard-coded Django debug and secret settings with local/prod environment handling.

@@ -2,23 +2,15 @@ import json
 from pathlib import Path
 
 from django.contrib.auth import authenticate, login, logout
-from django.core.files.base import ContentFile
 from django.db.models import Q
-from django.http import FileResponse, Http404, HttpResponse, JsonResponse
+from django.http import FileResponse, Http404, JsonResponse
 from django.utils import timezone
 from django.utils.text import get_valid_filename
 from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
-from .checklist_generator import (
-    ChecklistGenerationError,
-    InvalidConceptNoteError,
-    OpenAIConfigurationError,
-    extract_docx_text,
-    generate_checklist_payload,
-    render_checklist_pdf,
-)
 from .models import ChecklistJob, OpenAISettings, Resource
+from .tasks import generate_checklist_job
 
 
 CONTENT_TYPES = {
@@ -135,26 +127,7 @@ def resource_download(request, resource_id):
 @require_POST
 @csrf_protect
 def checklist_generate(request):
-    concept_note = request.FILES.get("concept_note")
-    if concept_note is None:
-        return JsonResponse({"detail": "Upload a DOCX Event Concept Note."}, status=400)
-
-    try:
-        concept_note_text = extract_docx_text(concept_note)
-        settings = OpenAISettings.get_solo()
-        payload = generate_checklist_payload(concept_note_text, settings.api_key.strip())
-        pdf = render_checklist_pdf(payload)
-    except InvalidConceptNoteError as exc:
-        return JsonResponse({"detail": str(exc)}, status=400)
-    except OpenAIConfigurationError as exc:
-        return JsonResponse({"detail": str(exc)}, status=503)
-    except ChecklistGenerationError as exc:
-        return JsonResponse({"detail": str(exc)}, status=502)
-
-    filename = get_valid_filename(f"{payload['event_title'][:80]} checklist.pdf") or "volunteer-checklist.pdf"
-    response = HttpResponse(pdf, content_type="application/pdf")
-    response["Content-Disposition"] = f'attachment; filename="{filename}"'
-    return response
+    return JsonResponse({"detail": "Use /api/checklists/jobs/create/ for queued checklist generation."}, status=410)
 
 
 @api_login_required
@@ -174,43 +147,17 @@ def checklist_job_create(request):
     if concept_note is None:
         return JsonResponse({"detail": "Upload a DOCX Event Concept Note."}, status=400)
 
-    settings = OpenAISettings.get_solo()
-    expires_at = timezone.now() + timezone.timedelta(minutes=settings.checklist_queue_timeout_minutes)
+    openai_settings = OpenAISettings.get_solo()
+    expires_at = timezone.now() + timezone.timedelta(minutes=openai_settings.checklist_queue_timeout_minutes)
     job = ChecklistJob.objects.create(
         user=request.user,
         input_filename=get_valid_filename(concept_note.name) or "concept-note.docx",
         concept_note=concept_note,
         expires_at=expires_at,
     )
-
-    try:
-        with job.concept_note.open("rb") as uploaded_file:
-            concept_note_text = extract_docx_text(uploaded_file)
-        payload = generate_checklist_payload(concept_note_text, settings.api_key.strip())
-        pdf = render_checklist_pdf(payload)
-    except InvalidConceptNoteError as exc:
-        job.status = ChecklistJob.Status.ERROR
-        job.error_message = str(exc)
-        job.save(update_fields=["status", "error_message", "updated_at"])
-        return JsonResponse({"job": _serialize_checklist_job(job)}, status=400)
-    except OpenAIConfigurationError as exc:
-        job.status = ChecklistJob.Status.ERROR
-        job.error_message = str(exc)
-        job.save(update_fields=["status", "error_message", "updated_at"])
-        return JsonResponse({"job": _serialize_checklist_job(job)}, status=503)
-    except ChecklistGenerationError as exc:
-        job.status = ChecklistJob.Status.ERROR
-        job.error_message = str(exc)
-        job.save(update_fields=["status", "error_message", "updated_at"])
-        return JsonResponse({"job": _serialize_checklist_job(job)}, status=502)
-
-    filename = get_valid_filename(f"{payload['event_title'][:80]} checklist.pdf") or "volunteer-checklist.pdf"
-    job.output_filename = filename
-    job.generated_pdf.save(filename, ContentFile(pdf), save=False)
-    job.status = ChecklistJob.Status.DONE
-    job.error_message = ""
-    job.save(update_fields=["output_filename", "generated_pdf", "status", "error_message", "updated_at"])
-    return JsonResponse({"job": _serialize_checklist_job(job)})
+    generate_checklist_job.delay(job.id)
+    job.refresh_from_db()
+    return JsonResponse({"job": _serialize_checklist_job(job)}, status=202)
 
 
 @api_login_required
