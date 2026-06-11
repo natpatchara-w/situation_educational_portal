@@ -1,6 +1,19 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { BookOpen, Download, FileCheck2, FileText, LogOut, Search } from "lucide-react";
+import {
+  BookOpen,
+  Download,
+  Eye,
+  FileCheck2,
+  FilePlus2,
+  FileText,
+  Library,
+  LoaderCircle,
+  LogOut,
+  Search,
+  Upload,
+  WandSparkles,
+} from "lucide-react";
 import "./styles.css";
 
 const API_BASE = `http://${window.location.hostname}:8000`;
@@ -39,6 +52,7 @@ async function apiFetch(path, options = {}) {
 function App() {
   const [user, setUser] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
+  const [activePage, setActivePage] = useState("library");
   const [resources, setResources] = useState([]);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("");
@@ -113,6 +127,7 @@ function App() {
     setResources([]);
     setSearch("");
     setCategory("");
+    setActivePage("library");
   }
 
   if (!authChecked) {
@@ -128,7 +143,7 @@ function App() {
       <header className="topbar">
         <div>
           <p className="eyebrow">Student Volunteer Portal</p>
-          <h1>Resource Library</h1>
+          <h1>{activePage === "library" ? "Resource Library" : "Generate Checklist"}</h1>
         </div>
         <button className="ghost-button" onClick={handleLogout} type="button">
           <LogOut size={18} />
@@ -136,6 +151,38 @@ function App() {
         </button>
       </header>
 
+      <nav className="page-tabs" aria-label="Portal pages">
+        <button className={activePage === "library" ? "active" : ""} onClick={() => setActivePage("library")} type="button">
+          <Library size={18} />
+          Resource Library
+        </button>
+        <button className={activePage === "generator" ? "active" : ""} onClick={() => setActivePage("generator")} type="button">
+          <WandSparkles size={18} />
+          Generate Checklist
+        </button>
+      </nav>
+
+      {activePage === "library" ? (
+        <ResourceLibrary
+          category={category}
+          error={error}
+          loading={loading}
+          resourceCounts={resourceCounts}
+          resources={resources}
+          search={search}
+          setCategory={setCategory}
+          setSearch={setSearch}
+        />
+      ) : (
+        <ChecklistGenerator />
+      )}
+    </main>
+  );
+}
+
+function ResourceLibrary({ category, error, loading, resourceCounts, resources, search, setCategory, setSearch }) {
+  return (
+    <>
       <section className="summary-band" aria-label="Resource summary">
         <SummaryItem icon={<FileCheck2 />} label="Checklists" value={resourceCounts.checklist} />
         <SummaryItem icon={<BookOpen />} label="Educational resources" value={resourceCounts.educational} />
@@ -182,8 +229,323 @@ function App() {
           ))}
         </section>
       )}
-    </main>
+    </>
   );
+}
+
+function ChecklistGenerator() {
+  const [queue, setQueue] = useState([]);
+  const [selectedId, setSelectedId] = useState(null);
+  const [processingId, setProcessingId] = useState(null);
+  const [loadError, setLoadError] = useState("");
+  const [previewUrls, setPreviewUrls] = useState({});
+  const [previewLoadingId, setPreviewLoadingId] = useState("");
+  const [previewError, setPreviewError] = useState({ id: "", message: "" });
+  const previewUrlsRef = useRef({});
+  const previewRequestsRef = useRef(new Set());
+
+  useEffect(() => {
+    let active = true;
+    async function loadJobs() {
+      try {
+        const payload = await apiFetch("/api/checklists/jobs/");
+        if (!active) return;
+        const jobs = payload.jobs.map(normalizeJob);
+        setQueue(jobs);
+        setSelectedId((current) => current || jobs[0]?.id || null);
+      } catch (err) {
+        if (active) setLoadError(err.message);
+      }
+    }
+
+    loadJobs();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      Object.values(previewUrlsRef.current).forEach((url) => window.URL.revokeObjectURL(url));
+    };
+  }, []);
+
+  useEffect(() => {
+    if (processingId) return;
+
+    const nextItem = queue.find((item) => item.status === "pending");
+    if (!nextItem) return;
+
+    setProcessingId(nextItem.id);
+    setQueue((items) =>
+      items.map((item) => (item.id === nextItem.id ? { ...item, status: "processing", error: "" } : item)),
+    );
+
+    createQueueJob(nextItem)
+      .then((job) => {
+        const normalizedJob = normalizeJob(job);
+        setQueue((items) =>
+          items.map((item) => (item.id === nextItem.id ? normalizedJob : item)),
+        );
+        setSelectedId((current) => (current === nextItem.id || !current ? normalizedJob.id : current));
+      })
+      .catch((err) => {
+        setQueue((items) =>
+          items.map((item) => (item.id === nextItem.id ? { ...item, status: "error", error: err.message } : item)),
+        );
+        setSelectedId((current) => current || nextItem.id);
+      })
+      .finally(() => {
+        setProcessingId(null);
+      });
+  }, [processingId, queue]);
+
+  const selectedItem = queue.find((item) => item.id === selectedId) || queue[0];
+  const pendingCount = queue.filter((item) => item.status === "pending").length;
+  const processingCount = queue.filter((item) => item.status === "processing").length;
+  const doneCount = queue.filter((item) => item.status === "done").length;
+
+  useEffect(() => {
+    if (!selectedItem || selectedItem.status !== "done" || !selectedItem.previewUrl) return;
+    if (previewUrls[selectedItem.id] || previewRequestsRef.current.has(selectedItem.id)) return;
+
+    let active = true;
+    previewRequestsRef.current.add(selectedItem.id);
+    setPreviewLoadingId(selectedItem.id);
+    setPreviewError({ id: "", message: "" });
+
+    fetchPdfBlobUrl(selectedItem.previewUrl)
+      .then((url) => {
+        if (!active) {
+          window.URL.revokeObjectURL(url);
+          return;
+        }
+        previewUrlsRef.current = { ...previewUrlsRef.current, [selectedItem.id]: url };
+        setPreviewUrls((current) => ({ ...current, [selectedItem.id]: url }));
+      })
+      .catch((err) => {
+        if (active) setPreviewError({ id: selectedItem.id, message: err.message });
+      })
+      .finally(() => {
+        previewRequestsRef.current.delete(selectedItem.id);
+        if (active) setPreviewLoadingId("");
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [previewUrls, selectedItem]);
+
+  function addFiles(fileList) {
+    const files = Array.from(fileList || []).filter((item) => item.name.toLowerCase().endsWith(".docx"));
+    if (files.length === 0) return;
+
+    const newItems = files.map((item) => ({
+      id: `${Date.now()}-${item.name}-${Math.random().toString(16).slice(2)}`,
+      file: item,
+      inputFilename: item.name,
+      status: "pending",
+      error: "",
+      outputFilename: "volunteer-checklist.pdf",
+      previewUrl: "",
+      downloadUrl: "",
+    }));
+
+    setQueue((items) => [...newItems, ...items]);
+    setSelectedId(newItems[0].id);
+  }
+
+  async function downloadSelected() {
+    if (!selectedItem?.downloadUrl) return;
+    try {
+      const url = await fetchPdfBlobUrl(selectedItem.downloadUrl);
+      downloadUrl(url, selectedItem.outputFilename);
+      window.setTimeout(() => window.URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      setPreviewError({ id: selectedItem.id, message: err.message });
+    }
+  }
+
+  return (
+    <section className="generator-workspace" aria-label="Generate checklist PDF">
+      <div className="generator-panel">
+        <div>
+          <p className="eyebrow">AI Checklist Generator</p>
+          <h2>Upload Event Concept Notes</h2>
+          <p>
+            Add one or more DOCX files. Each concept note is processed in order and saved in the queue for preview
+            before download.
+          </p>
+        </div>
+
+        <div className="upload-form">
+          {loadError && <p className="notice error">{loadError}</p>}
+          <label className="upload-dropzone">
+            <Upload size={26} />
+            <span>Add DOCX files to queue</span>
+            <input
+              accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              multiple
+              onChange={(event) => {
+                addFiles(event.target.files);
+                event.target.value = "";
+              }}
+              type="file"
+            />
+          </label>
+
+          <div className="queue-stats" aria-label="Queue status">
+            <SummaryItem icon={<LoaderCircle />} label="Processing" value={processingCount} />
+            <SummaryItem icon={<FileText />} label="Waiting" value={pendingCount} />
+            <SummaryItem icon={<FileCheck2 />} label="Ready" value={doneCount} />
+          </div>
+        </div>
+      </div>
+
+      <div className="queue-layout">
+        <aside className="queue-list" aria-label="Checklist generation queue">
+          <div className="queue-list-header">
+            <FilePlus2 size={19} />
+            <h2>Processing Queue</h2>
+          </div>
+
+          {queue.length === 0 ? (
+            <p className="queue-empty">No documents in the queue.</p>
+          ) : (
+            queue.map((item) => (
+              <button
+                className={`queue-item ${selectedItem?.id === item.id ? "active" : ""}`}
+                key={item.id}
+                onClick={() => setSelectedId(item.id)}
+                type="button"
+              >
+                <span className={`status-dot ${item.status}`} />
+                <span>
+                  <strong>{item.inputFilename}</strong>
+                  <small>{getQueueStatusLabel(item)}</small>
+                  {item.expiresAt && <small>Expires {formatQueueTime(item.expiresAt)}</small>}
+                </span>
+              </button>
+            ))
+          )}
+        </aside>
+
+        <section className="preview-panel" aria-label="Checklist preview">
+          {!selectedItem ? (
+            <div className="preview-empty">
+              <Eye size={32} />
+              <h2>Preview will appear here</h2>
+              <p>Add DOCX files to generate volunteer checklist PDFs.</p>
+            </div>
+          ) : selectedItem.status === "done" ? (
+            <>
+              <div className="preview-header">
+                <div>
+                  <p className="eyebrow">PDF Preview</p>
+                  <h2>{selectedItem.outputFilename}</h2>
+                </div>
+                <button className="download-button" onClick={downloadSelected} type="button">
+                  <Download size={17} />
+                  Download
+                </button>
+              </div>
+              {previewError.id === selectedItem.id ? (
+                <div className="preview-empty">
+                  <FileText size={32} />
+                  <h2>Preview unavailable</h2>
+                  <p>{previewError.message}</p>
+                </div>
+              ) : previewUrls[selectedItem.id] ? (
+                <iframe className="pdf-preview" src={previewUrls[selectedItem.id]} title={selectedItem.outputFilename} />
+              ) : (
+                <div className="preview-empty">
+                  <LoaderCircle className="spin" size={32} />
+                  <h2>Loading preview</h2>
+                  <p>Preparing the generated PDF preview.</p>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="preview-empty">
+              {selectedItem.status === "error" ? <FileText size={32} /> : <LoaderCircle className="spin" size={32} />}
+              <h2>{selectedItem.inputFilename}</h2>
+              <p>{selectedItem.status === "error" ? selectedItem.error : getQueueStatusLabel(selectedItem)}</p>
+            </div>
+          )}
+        </section>
+      </div>
+    </section>
+  );
+}
+
+async function createQueueJob(item) {
+  const formData = new FormData();
+  formData.append("concept_note", item.file);
+
+  await apiFetch("/api/auth/csrf/");
+  const response = await fetch(`${API_BASE}/api/checklists/jobs/create/`, {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "X-CSRFToken": getCookie("csrftoken") || "",
+    },
+    body: formData,
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (payload.job) return payload.job;
+  if (!response.ok) throw new Error(payload.detail || "Checklist generation failed.");
+  throw new Error("Checklist generation returned an invalid response.");
+}
+
+async function fetchPdfBlobUrl(path) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.detail || "Could not load the generated PDF.");
+  }
+
+  const blob = await response.blob();
+  return window.URL.createObjectURL(blob);
+}
+
+function getQueueStatusLabel(item) {
+  if (item.status === "pending") return "Waiting to process";
+  if (item.status === "processing") return "Generating checklist";
+  if (item.status === "done") return "Ready to preview";
+  return item.error || "Generation failed";
+}
+
+function downloadUrl(url, filename) {
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+function normalizeJob(job) {
+  return {
+    id: String(job.id),
+    inputFilename: job.inputFilename,
+    outputFilename: job.outputFilename || "volunteer-checklist.pdf",
+    status: job.status,
+    error: job.error || "",
+    previewUrl: job.previewUrl || "",
+    downloadUrl: job.downloadUrl || "",
+    expiresAt: job.expiresAt,
+  };
+}
+
+function formatQueueTime(value) {
+  return new Intl.DateTimeFormat("en", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
 }
 
 function LoginScreen({ onLogin }) {
