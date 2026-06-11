@@ -9,3 +9,13 @@
 Verification:
 
 - `uv lock`
+
+## SEC-02: Supported Django release
+
+- Upgraded the backend dependency target from unsupported Django 4.2 to Django 5.2 LTS.
+- Refreshed `uv.lock` so deployments resolve a supported Django version.
+
+Verification:
+
+- `uv lock`
+- `uv run python backend/manage.py test resources`
