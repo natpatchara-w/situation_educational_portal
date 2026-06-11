@@ -1,5 +1,6 @@
 import json
 from io import BytesIO
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -16,6 +17,7 @@ from django.urls import reverse
 from docx import Document
 
 from .checklist_generator import extract_docx_text
+from .cleanup import delete_expired_checklist_jobs
 from .models import ChecklistJob, OpenAISettings, Resource
 from .pdf_utils import build_simple_pdf
 
@@ -370,3 +372,23 @@ class ChecklistGeneratorApiTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["jobs"], [])
+
+    def test_cleanup_deletes_expired_job_files(self):
+        expired_job = ChecklistJob.objects.create(
+            user=self.user,
+            input_filename="expired.docx",
+            concept_note=SimpleUploadedFile("expired.docx", build_readable_docx(), content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+            output_filename="expired.pdf",
+            status=ChecklistJob.Status.DONE,
+            expires_at=timezone.now() - timezone.timedelta(minutes=1),
+        )
+        expired_job.generated_pdf.save("expired.pdf", ContentFile(build_simple_pdf("Expired", "Expired")), save=True)
+        concept_path = expired_job.concept_note.path
+        pdf_path = expired_job.generated_pdf.path
+
+        deleted = delete_expired_checklist_jobs()
+
+        self.assertEqual(deleted, 1)
+        self.assertFalse(ChecklistJob.objects.filter(id=expired_job.id).exists())
+        self.assertFalse(Path(concept_path).exists())
+        self.assertFalse(Path(pdf_path).exists())

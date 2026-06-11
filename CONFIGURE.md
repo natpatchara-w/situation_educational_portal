@@ -114,6 +114,28 @@ DJANGO_DOCX_MAX_UNCOMPRESSED_BYTES=20971520
 DJANGO_DOCX_MAX_COMPRESSION_RATIO=1000
 ```
 
+Private uploaded files are stored outside public media:
+
+```bash
+DJANGO_PRIVATE_MEDIA_ROOT=/srv/volunteer-portal/private-media
+```
+
+Do not serve `DJANGO_PRIVATE_MEDIA_ROOT` directly through a web server or CDN. Files should be downloaded only through authenticated Django API views.
+
+For deployments with legacy files under `MEDIA_ROOT`, copy them into private storage before switching traffic:
+
+```bash
+uv run python backend/manage.py migrate_private_media --dry-run
+uv run python backend/manage.py migrate_private_media
+```
+
+Schedule expired checklist cleanup with either Celery or cron:
+
+```bash
+uv run celery -A volunteer_portal call resources.tasks.cleanup_expired_checklist_jobs --workdir backend
+uv run python backend/manage.py cleanup_checklist_jobs
+```
+
 Deployment verification:
 
 ```bash

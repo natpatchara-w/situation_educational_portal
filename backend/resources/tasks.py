@@ -11,6 +11,7 @@ from .checklist_generator import (
     render_checklist_pdf,
 )
 from .models import ChecklistJob, OpenAISettings
+from .cleanup import delete_expired_checklist_jobs
 
 
 @shared_task(bind=True, autoretry_for=(), ignore_result=True)
@@ -42,3 +43,8 @@ def generate_checklist_job(self, job_id):
     job.status = ChecklistJob.Status.DONE
     job.error_message = ""
     job.save(update_fields=["output_filename", "generated_pdf", "status", "error_message", "updated_at"])
+
+
+@shared_task(ignore_result=True)
+def cleanup_expired_checklist_jobs():
+    delete_expired_checklist_jobs()

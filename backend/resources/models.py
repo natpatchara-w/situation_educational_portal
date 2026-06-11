@@ -6,6 +6,7 @@ from django.core.validators import FileExtensionValidator
 from django.db import models
 
 from .fields import EncryptedTextField
+from .storage import PrivateMediaStorage
 from .upload_validation import validate_docx_archive, validate_file_size
 
 
@@ -37,6 +38,7 @@ class Resource(models.Model):
     category = models.CharField(max_length=20, choices=Category.choices)
     pdf_file = models.FileField(
         "resource file",
+        storage=PrivateMediaStorage(),
         upload_to="resources/files/",
         validators=[FileExtensionValidator(["pdf", "docx"]), validate_resource_file],
     )
@@ -82,8 +84,8 @@ class ChecklistJob(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="checklist_jobs")
     input_filename = models.CharField(max_length=255)
     output_filename = models.CharField(max_length=255, blank=True)
-    concept_note = models.FileField(upload_to="checklist_jobs/concept_notes/")
-    generated_pdf = models.FileField(upload_to="checklist_jobs/pdfs/", blank=True)
+    concept_note = models.FileField(storage=PrivateMediaStorage(), upload_to="checklist_jobs/concept_notes/")
+    generated_pdf = models.FileField(storage=PrivateMediaStorage(), upload_to="checklist_jobs/pdfs/", blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     error_message = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

@@ -20,6 +20,17 @@ Verification:
 - `uv lock`
 - `uv run python backend/manage.py test resources`
 
+## SEC-04: Private storage and checklist retention cleanup
+
+- Moved uploaded resource files, checklist concept notes, and generated PDFs to private file storage under `DJANGO_PRIVATE_MEDIA_ROOT`.
+- Added cleanup helpers, a Celery cleanup task, and a `cleanup_checklist_jobs` management command to delete expired checklist files and rows.
+- Added `migrate_private_media` to copy legacy files from public media into private storage without deleting originals.
+- Ignored local private media in git and documented private media deployment requirements.
+
+Verification:
+
+- `uv run python backend/manage.py test resources`
+
 ## SEC-05: Upload size and DOCX safety limits
 
 - Added shared upload validation for file size, DOCX structure, zip entry count, uncompressed size, and compression ratio.
