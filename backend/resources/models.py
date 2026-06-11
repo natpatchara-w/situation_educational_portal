@@ -95,6 +95,9 @@ class ChecklistJob(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        permissions = [
+            ("can_generate_checklist", "Can generate checklist"),
+        ]
 
     def __str__(self):
         return self.input_filename

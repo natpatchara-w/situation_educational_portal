@@ -36,6 +36,15 @@ def api_login_required(view_func):
     return wrapper
 
 
+def checklist_permission_required(view_func):
+    def wrapper(request, *args, **kwargs):
+        if not request.user.has_perm("resources.can_generate_checklist"):
+            return JsonResponse({"detail": "Checklist generation permission required."}, status=403)
+        return view_func(request, *args, **kwargs)
+
+    return wrapper
+
+
 @ensure_csrf_cookie
 @require_GET
 def csrf(request):
@@ -122,6 +131,7 @@ def resource_download(request, resource_id):
 
 
 @api_login_required
+@checklist_permission_required
 @require_POST
 @csrf_protect
 def checklist_generate(request):
@@ -148,6 +158,7 @@ def checklist_generate(request):
 
 
 @api_login_required
+@checklist_permission_required
 @require_GET
 def checklist_job_list(request):
     jobs = ChecklistJob.objects.filter(user=request.user, expires_at__gt=timezone.now())
@@ -155,6 +166,7 @@ def checklist_job_list(request):
 
 
 @api_login_required
+@checklist_permission_required
 @require_POST
 @csrf_protect
 def checklist_job_create(request):
@@ -203,6 +215,7 @@ def checklist_job_create(request):
 
 
 @api_login_required
+@checklist_permission_required
 @require_GET
 def checklist_job_preview(request, job_id):
     job = _get_current_checklist_job(request.user, job_id)
@@ -215,6 +228,7 @@ def checklist_job_preview(request, job_id):
 
 
 @api_login_required
+@checklist_permission_required
 @require_GET
 def checklist_job_download(request, job_id):
     job = _get_current_checklist_job(request.user, job_id)
@@ -231,6 +245,7 @@ def _serialize_user(user):
         "id": user.id,
         "username": user.get_username(),
         "isStaff": user.is_staff,
+        "canGenerateChecklist": user.has_perm("resources.can_generate_checklist"),
     }
 
 

@@ -130,6 +130,10 @@ function App() {
     setActivePage("library");
   }
 
+  function selectGeneratorPage() {
+    if (user.canGenerateChecklist) setActivePage("generator");
+  }
+
   if (!authChecked) {
     return <StatusScreen message="Preparing your resource library..." />;
   }
@@ -156,13 +160,17 @@ function App() {
           <Library size={18} />
           Resource Library
         </button>
-        <button className={activePage === "generator" ? "active" : ""} onClick={() => setActivePage("generator")} type="button">
-          <WandSparkles size={18} />
-          Generate Checklist
-        </button>
+        {user.canGenerateChecklist && (
+          <button className={activePage === "generator" ? "active" : ""} onClick={selectGeneratorPage} type="button">
+            <WandSparkles size={18} />
+            Generate Checklist
+          </button>
+        )}
       </nav>
 
-      {activePage === "library" ? (
+      {activePage === "generator" && user.canGenerateChecklist ? (
+        <ChecklistGenerator />
+      ) : (
         <ResourceLibrary
           category={category}
           error={error}
@@ -173,8 +181,6 @@ function App() {
           setCategory={setCategory}
           setSearch={setSearch}
         />
-      ) : (
-        <ChecklistGenerator />
       )}
     </main>
   );
