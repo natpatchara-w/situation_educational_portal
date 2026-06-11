@@ -6,6 +6,8 @@ from django.core.exceptions import ValidationError
 from django.core.validators import FileExtensionValidator
 from django.db import models
 
+from .fields import EncryptedTextField
+
 
 def validate_resource_file(uploaded_file):
     extension = Path(uploaded_file.name).suffix.lower()
@@ -55,7 +57,7 @@ class Resource(models.Model):
 
 
 class OpenAISettings(models.Model):
-    api_key = models.CharField("OpenAI API key", max_length=255, blank=True)
+    api_key = EncryptedTextField("OpenAI API key", blank=True)
     checklist_queue_timeout_minutes = models.PositiveIntegerField(
         "checklist queue timeout in minutes",
         default=120,

@@ -9,6 +9,7 @@ from django.contrib.auth.models import Permission
 from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import connection
 from django.test import TestCase
 from django.utils import timezone
 from django.urls import reverse
@@ -227,6 +228,17 @@ class ChecklistGeneratorApiTests(TestCase):
         call_kwargs = openai.return_value.responses.create.call_args.kwargs
         self.assertEqual(call_kwargs["model"], "gpt-5.5")
         self.assertEqual(call_kwargs["reasoning"], {"effort": "medium"})
+
+    def test_openai_api_key_is_encrypted_at_rest(self):
+        settings = OpenAISettings.objects.create(api_key="sk-test")
+
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT api_key FROM resources_openaisettings WHERE id = %s", [settings.id])
+            stored_value = cursor.fetchone()[0]
+
+        self.assertNotEqual(stored_value, "sk-test")
+        self.assertTrue(stored_value.startswith("fernet$"))
+        self.assertEqual(OpenAISettings.objects.get(id=settings.id).api_key, "sk-test")
 
     def test_generate_checklist_rejects_invalid_docx(self):
         self.client.login(username="volunteer", password="test-password")

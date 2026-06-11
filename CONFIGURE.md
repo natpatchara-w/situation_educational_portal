@@ -43,10 +43,19 @@ Required Django variables:
 DJANGO_ENV=production
 DJANGO_DEBUG=false
 DJANGO_SECRET_KEY=<long-random-secret>
+DJANGO_FIELD_ENCRYPTION_KEY=<fernet-key>
 DJANGO_ALLOWED_HOSTS=api.example.org
 DJANGO_FRONTEND_ORIGINS=https://portal.example.org
 DJANGO_CSRF_TRUSTED_ORIGINS=https://portal.example.org
 ```
+
+Generate an encryption key for encrypted application secrets:
+
+```bash
+uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Keep `DJANGO_FIELD_ENCRYPTION_KEY` stable for the lifetime of encrypted database values. Rotate it only with a planned re-encryption migration.
 
 Recommended TLS/proxy variables when Django is behind a trusted HTTPS proxy:
 

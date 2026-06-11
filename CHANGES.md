@@ -30,3 +30,15 @@ Verification:
 Verification:
 
 - `uv run python backend/manage.py test resources`
+
+## SEC-03: Encrypted OpenAI API key storage
+
+- Added an encrypted model field for the OpenAI API key using Fernet encryption at rest.
+- Updated Django admin so stored keys are masked and only replaced when a new key is submitted.
+- Added a migration that encrypts existing plaintext key values on upgrade.
+- Added configuration guidance for `DJANGO_FIELD_ENCRYPTION_KEY`.
+
+Verification:
+
+- `uv lock`
+- `uv run python backend/manage.py test resources`
