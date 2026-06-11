@@ -17,7 +17,7 @@ from django.utils import timezone
 from django.urls import reverse
 from docx import Document
 
-from .checklist_generator import extract_docx_text
+from .checklist_generator import extract_docx_text, generate_checklist_payload, normalize_checklist_payload, redact_sensitive_text
 from .cleanup import delete_expired_checklist_jobs
 from .models import ChecklistJob, OpenAISettings, Resource, ThrottleRecord
 from .pdf_utils import build_simple_pdf
@@ -252,6 +252,49 @@ class ChecklistGeneratorApiTests(TestCase):
 
         self.assertIn("Event Concept Note", text)
         self.assertIn("Marimba workshop", text)
+
+    def test_redact_sensitive_text_masks_obvious_personal_data_and_tokens(self):
+        redacted = redact_sensitive_text("Email jane@example.org, call +1 555-111-2222, api_key=sk_secretvalue12345")
+
+        self.assertIn("[redacted-email]", redacted)
+        self.assertIn("[redacted-phone]", redacted)
+        self.assertIn("[redacted-secret]", redacted)
+
+    @override_settings(CHECKLIST_MAX_SECTIONS=1, CHECKLIST_MAX_ITEMS_PER_SECTION=1)
+    def test_normalize_checklist_payload_bounds_model_output(self):
+        payload = normalize_checklist_payload(
+            {
+                "event_title": "x" * 300,
+                "source_note": "y" * 700,
+                "sections": [
+                    {"title": "First", "items": ["a", "b"]},
+                    {"title": "Second", "items": ["c"]},
+                ],
+            }
+        )
+
+        self.assertEqual(len(payload["event_title"]), 160)
+        self.assertEqual(len(payload["source_note"]), 500)
+        self.assertEqual(len(payload["sections"]), 1)
+        self.assertEqual(payload["sections"][0]["items"], ["a"])
+
+    def test_generate_checklist_redacts_prompt_before_openai_call(self):
+        output_text = json.dumps(
+            {
+                "event_title": "Safe Workshop",
+                "source_note": "Generated.",
+                "sections": [{"title": "Quick checklist", "items": ["Bring water."]}],
+            }
+        )
+
+        with patch("resources.checklist_generator.OpenAI") as openai:
+            openai.return_value.responses.create.return_value = SimpleNamespace(output_text=output_text)
+            generate_checklist_payload("Contact jane@example.org and api_key=sk_secretvalue12345", "sk-test")
+
+        user_prompt = openai.return_value.responses.create.call_args.kwargs["input"][1]["content"]
+        self.assertNotIn("jane@example.org", user_prompt)
+        self.assertNotIn("sk_secretvalue12345", user_prompt)
+        self.assertIn("[redacted-email]", user_prompt)
 
     def test_generate_checklist_endpoint_requires_queue_endpoint(self):
         self.client.login(username="volunteer", password="test-password")

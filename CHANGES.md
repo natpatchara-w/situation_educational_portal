@@ -31,6 +31,18 @@ Verification:
 
 - `uv run python backend/manage.py test resources`
 
+## SEC-11: AI data handling controls
+
+- Added redaction for obvious emails, phone-like values, and common secret/token patterns before sending concept notes to OpenAI.
+- Added OpenAI request timeout configuration.
+- Added stricter checklist payload normalization limits for titles, notes, sections, and section items.
+- Expanded deployment guidance for AI data handling and user/admin review.
+
+Verification:
+
+- `uv run python backend/manage.py test resources`
+- `npm run build`
+
 ## SEC-10: UUID public identifiers
 
 - Added UUID public identifiers for resources and checklist jobs.

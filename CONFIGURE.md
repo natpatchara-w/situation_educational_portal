@@ -178,6 +178,21 @@ frame-ancestors 'none'
 
 Start with `Content-Security-Policy-Report-Only` if your hosting provider supports report-only rollout, then enforce after verifying login, resource downloads, and PDF previews.
 
+AI checklist generation sends redacted concept-note text to OpenAI. Configure timeout and output limits:
+
+```bash
+OPENAI_REQUEST_TIMEOUT_SECONDS=60
+DJANGO_CHECKLIST_MAX_SECTIONS=20
+DJANGO_CHECKLIST_MAX_ITEMS_PER_SECTION=40
+```
+
+Before production use:
+
+- Inform admins and authorized checklist generators that concept notes are processed by OpenAI.
+- Avoid uploading secrets, credentials, or unnecessary personal data.
+- Keep provider project spend limits and monitoring enabled.
+- Review generated PDFs before sharing them with volunteers.
+
 Deployment verification:
 
 ```bash

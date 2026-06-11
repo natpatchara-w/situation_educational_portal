@@ -1,4 +1,5 @@
 import json
+import re
 from io import BytesIO
 from pathlib import Path
 
@@ -66,6 +67,13 @@ Event Concept Note:
 {concept_note}
 """.strip()
 
+REDACTION_PATTERNS = [
+    (re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE), "[redacted-email]"),
+    (re.compile(r"\b(?:\+?\d[\d\s().-]{7,}\d)\b"), "[redacted-phone]"),
+    (re.compile(r"\b(?:sk|pk|rk|ghp|gho|github_pat)_[A-Za-z0-9_\-]{12,}\b"), "[redacted-token]"),
+    (re.compile(r"(?i)\b(api[_ -]?key|secret|password|token)\s*[:=]\s*\S+"), r"\1=[redacted-secret]"),
+]
+
 
 def extract_docx_text(uploaded_file):
     if Path(uploaded_file.name).suffix.lower() != ".docx":
@@ -104,14 +112,15 @@ def generate_checklist_payload(concept_note_text, api_key):
     if not api_key:
         raise OpenAIConfigurationError("OpenAI API key is not configured. Ask an admin to add it in Django admin.")
 
-    client = OpenAI(api_key=api_key)
+    safe_concept_note = redact_sensitive_text(concept_note_text)
+    client = OpenAI(api_key=api_key, timeout=settings.OPENAI_REQUEST_TIMEOUT_SECONDS)
     try:
         response = client.responses.create(
             model="gpt-5.5",
             reasoning={"effort": "medium"},
             input=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": USER_PROMPT_TEMPLATE.format(concept_note=concept_note_text[:80000])},
+                {"role": "user", "content": USER_PROMPT_TEMPLATE.format(concept_note=safe_concept_note[:80000])},
             ],
             text={"format": {"type": "json_object"}},
         )
@@ -124,14 +133,36 @@ def generate_checklist_payload(concept_note_text, api_key):
         raise ChecklistGenerationError("Checklist generation returned an invalid response.") from exc
 
 
+def redact_sensitive_text(value):
+    redacted = str(value)
+    for pattern, replacement in REDACTION_PATTERNS:
+        redacted = pattern.sub(replacement, redacted)
+    return redacted
+
+
+def _bounded_text(value, fallback, max_length):
+    text = str(value or fallback).strip()
+    return text[:max_length] or fallback
+
+
 def normalize_checklist_payload(payload):
-    event_title = str(payload.get("event_title") or "Volunteer Event Checklist").strip()
-    source_note = str(payload.get("source_note") or "Generated from uploaded Event Concept Note.").strip()
+    event_title = _bounded_text(payload.get("event_title"), "Volunteer Event Checklist", 160)
+    source_note = _bounded_text(payload.get("source_note"), "Generated from uploaded Event Concept Note.", 500)
     sections = []
 
-    for section in payload.get("sections") or []:
-        title = str(section.get("title") or "").strip()
-        items = [str(item).strip() for item in section.get("items") or [] if str(item).strip()]
+    raw_sections = payload.get("sections")
+    if not isinstance(raw_sections, list):
+        raise ValueError("Checklist response sections must be a list.")
+
+    for section in raw_sections[: settings.CHECKLIST_MAX_SECTIONS]:
+        if not isinstance(section, dict):
+            continue
+        title = _bounded_text(section.get("title"), "", 120)
+        raw_items = section.get("items") or []
+        if not isinstance(raw_items, list):
+            continue
+        items = [_bounded_text(item, "", 500) for item in raw_items[: settings.CHECKLIST_MAX_ITEMS_PER_SECTION]]
+        items = [item for item in items if item]
         if title and items:
             sections.append({"title": title, "items": items})
 
