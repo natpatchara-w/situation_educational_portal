@@ -51,3 +51,20 @@ class Resource(models.Model):
 
     def __str__(self):
         return self.title
+
+
+class OpenAISettings(models.Model):
+    api_key = models.CharField("OpenAI API key", max_length=255, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "OpenAI settings"
+        verbose_name_plural = "OpenAI settings"
+
+    def __str__(self):
+        return "OpenAI settings"
+
+    @classmethod
+    def get_solo(cls):
+        settings, _created = cls.objects.get_or_create(pk=1)
+        return settings

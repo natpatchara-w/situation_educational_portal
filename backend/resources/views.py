@@ -3,12 +3,20 @@ from pathlib import Path
 
 from django.contrib.auth import authenticate, login, logout
 from django.db.models import Q
-from django.http import FileResponse, Http404, JsonResponse
+from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.utils.text import get_valid_filename
 from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
-from .models import Resource
+from .checklist_generator import (
+    ChecklistGenerationError,
+    InvalidConceptNoteError,
+    OpenAIConfigurationError,
+    extract_docx_text,
+    generate_checklist_payload,
+    render_checklist_pdf,
+)
+from .models import OpenAISettings, Resource
 
 
 CONTENT_TYPES = {
@@ -107,6 +115,32 @@ def resource_download(request, resource_id):
     filename = get_valid_filename(resource.pdf_file.name.rsplit("/", 1)[-1])
     content_type = CONTENT_TYPES.get(Path(filename).suffix.lower(), "application/octet-stream")
     response = FileResponse(resource.pdf_file.open("rb"), content_type=content_type)
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+@api_login_required
+@require_POST
+@csrf_protect
+def checklist_generate(request):
+    concept_note = request.FILES.get("concept_note")
+    if concept_note is None:
+        return JsonResponse({"detail": "Upload a DOCX Event Concept Note."}, status=400)
+
+    try:
+        concept_note_text = extract_docx_text(concept_note)
+        settings = OpenAISettings.get_solo()
+        payload = generate_checklist_payload(concept_note_text, settings.api_key.strip())
+        pdf = render_checklist_pdf(payload)
+    except InvalidConceptNoteError as exc:
+        return JsonResponse({"detail": str(exc)}, status=400)
+    except OpenAIConfigurationError as exc:
+        return JsonResponse({"detail": str(exc)}, status=503)
+    except ChecklistGenerationError as exc:
+        return JsonResponse({"detail": str(exc)}, status=502)
+
+    filename = get_valid_filename(f"{payload['event_title'][:80]} checklist.pdf") or "volunteer-checklist.pdf"
+    response = HttpResponse(pdf, content_type="application/pdf")
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     return response
 
