@@ -6,12 +6,10 @@ Full-stack portal for student volunteers to log in, browse PDF/DOCX resources, a
 
 ```bash
 cd backend
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python manage.py migrate
-python manage.py createsuperuser
-python manage.py runserver 8000
+uv sync
+uv run python backend/manage.py migrate
+uv run python backend/manage.py createsuperuser
+uv run python backend/manage.py runserver 8000
 ```
 
 Upload PDF or DOCX files at `http://localhost:8000/admin/`.

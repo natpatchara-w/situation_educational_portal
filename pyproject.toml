@@ -1,0 +1,14 @@
+[project]
+name = "datakind-gmls-assistant"
+version = "0.1.0"
+description = "Volunteer resource portal and checklist generator"
+requires-python = ">=3.10"
+dependencies = [
+    "Django>=4.2,<5.0",
+    "openai>=1.99.0",
+    "python-docx>=1.1.2",
+    "reportlab>=4.2.5",
+]
+
+[tool.uv]
+package = false
