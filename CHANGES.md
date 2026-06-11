@@ -31,6 +31,16 @@ Verification:
 
 - `uv run python backend/manage.py test resources`
 
+## SEC-08: CSP and security header controls
+
+- Added configurable CSP middleware for Django responses with production-enabled defaults.
+- Added report-only support for CSP rollout.
+- Documented a frontend static-host CSP that supports API calls and blob-based PDF previews without `unsafe-eval`.
+
+Verification:
+
+- `uv run python backend/manage.py test resources`
+
 ## SEC-09: Strict configured CORS
 
 - Replaced the local-dev CORS middleware naming with explicit configured-origin CORS behavior.

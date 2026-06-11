@@ -104,6 +104,22 @@ class ResourceApiTests(TestCase):
 
         self.assertNotIn("Access-Control-Allow-Origin", response)
 
+    @override_settings(CSP_ENABLED=True, CSP_REPORT_ONLY=False, CSP_POLICY="default-src 'self'")
+    def test_csp_header_can_be_enabled(self):
+        self.client.login(username="volunteer", password="test-password")
+
+        response = self.client.get(reverse("api-resource-list"))
+
+        self.assertEqual(response["Content-Security-Policy"], "default-src 'self'")
+
+    @override_settings(CSP_ENABLED=True, CSP_REPORT_ONLY=True, CSP_POLICY="default-src 'self'")
+    def test_csp_report_only_header_can_be_enabled(self):
+        self.client.login(username="volunteer", password="test-password")
+
+        response = self.client.get(reverse("api-resource-list"))
+
+        self.assertEqual(response["Content-Security-Policy-Report-Only"], "default-src 'self'")
+
     def test_search_and_category_filters_resources(self):
         self.client.login(username="volunteer", password="test-password")
 

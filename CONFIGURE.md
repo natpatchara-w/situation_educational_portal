@@ -154,6 +154,30 @@ DJANGO_CHECKLIST_JOB_THROTTLE_LIMIT=10
 DJANGO_CHECKLIST_JOB_THROTTLE_WINDOW_SECONDS=3600
 ```
 
+Django can emit CSP headers for API/admin responses:
+
+```bash
+DJANGO_CSP_ENABLED=true
+DJANGO_CSP_REPORT_ONLY=false
+DJANGO_CSP_POLICY="default-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+```
+
+For the static React frontend host, configure CSP at the CDN/static server. A production starting point:
+
+```text
+default-src 'self';
+script-src 'self';
+style-src 'self';
+img-src 'self' data: https://images.unsplash.com;
+connect-src https://api.example.org;
+frame-src blob:;
+object-src 'none';
+base-uri 'self';
+frame-ancestors 'none'
+```
+
+Start with `Content-Security-Policy-Report-Only` if your hosting provider supports report-only rollout, then enforce after verifying login, resource downloads, and PDF previews.
+
 Deployment verification:
 
 ```bash

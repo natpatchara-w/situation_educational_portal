@@ -27,6 +27,18 @@ class ConfiguredCorsMiddleware:
         return response
 
 
+class SecurityHeadersMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+        if settings.CSP_ENABLED:
+            header_name = "Content-Security-Policy-Report-Only" if settings.CSP_REPORT_ONLY else "Content-Security-Policy"
+            response.setdefault(header_name, settings.CSP_POLICY)
+        return response
+
+
 class DatabaseLoginThrottleMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response

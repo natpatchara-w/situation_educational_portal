@@ -61,6 +61,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "resources.middleware.ConfiguredCorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "resources.middleware.SecurityHeadersMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "resources.middleware.DatabaseLoginThrottleMiddleware",
@@ -140,6 +141,12 @@ SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool("DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS
 SECURE_HSTS_PRELOAD = env_bool("DJANGO_SECURE_HSTS_PRELOAD", False)
 SECURE_REFERRER_POLICY = os.environ.get("DJANGO_SECURE_REFERRER_POLICY", "same-origin")
 SECURE_CONTENT_TYPE_NOSNIFF = True
+CSP_ENABLED = env_bool("DJANGO_CSP_ENABLED", IS_PRODUCTION)
+CSP_REPORT_ONLY = env_bool("DJANGO_CSP_REPORT_ONLY", False)
+CSP_POLICY = os.environ.get(
+    "DJANGO_CSP_POLICY",
+    "default-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+)
 FIELD_ENCRYPTION_KEY = os.environ.get("DJANGO_FIELD_ENCRYPTION_KEY", "")
 CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0")
 CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
