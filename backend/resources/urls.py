@@ -11,8 +11,8 @@ urlpatterns = [
     path("checklists/generate/", views.checklist_generate, name="api-checklist-generate"),
     path("checklists/jobs/", views.checklist_job_list, name="api-checklist-job-list"),
     path("checklists/jobs/create/", views.checklist_job_create, name="api-checklist-job-create"),
-    path("checklists/jobs/<int:job_id>/preview/", views.checklist_job_preview, name="api-checklist-job-preview"),
-    path("checklists/jobs/<int:job_id>/download/", views.checklist_job_download, name="api-checklist-job-download"),
+    path("checklists/jobs/<uuid:job_id>/preview/", views.checklist_job_preview, name="api-checklist-job-preview"),
+    path("checklists/jobs/<uuid:job_id>/download/", views.checklist_job_download, name="api-checklist-job-download"),
     path("resources/", views.resource_list, name="api-resource-list"),
-    path("resources/<int:resource_id>/download/", views.resource_download, name="api-resource-download"),
+    path("resources/<uuid:resource_id>/download/", views.resource_download, name="api-resource-download"),
 ]

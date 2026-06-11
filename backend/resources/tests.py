@@ -1,4 +1,5 @@
 import json
+import uuid
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -92,6 +93,7 @@ class ResourceApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(len(payload["resources"]), 2)
+        uuid.UUID(payload["resources"][0]["id"])
 
     def test_cors_allows_configured_frontend_origin(self):
         response = self.client.options(reverse("api-resource-list"), HTTP_ORIGIN="http://localhost:5173")
@@ -133,7 +135,7 @@ class ResourceApiTests(TestCase):
     def test_download_serves_active_pdf(self):
         self.client.login(username="volunteer", password="test-password")
 
-        response = self.client.get(reverse("api-resource-download", args=[self.checklist.id]))
+        response = self.client.get(reverse("api-resource-download", args=[self.checklist.public_id]))
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Type"], "application/pdf")
@@ -152,7 +154,7 @@ class ResourceApiTests(TestCase):
         )
         self.client.login(username="volunteer", password="test-password")
 
-        response = self.client.get(reverse("api-resource-download", args=[docx.id]))
+        response = self.client.get(reverse("api-resource-download", args=[docx.public_id]))
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
@@ -165,7 +167,7 @@ class ResourceApiTests(TestCase):
     def test_download_rejects_missing_resource(self):
         self.client.login(username="volunteer", password="test-password")
 
-        response = self.client.get(reverse("api-resource-download", args=[9999]))
+        response = self.client.get(reverse("api-resource-download", args=[uuid.uuid4()]))
 
         self.assertEqual(response.status_code, 404)
 
@@ -382,6 +384,7 @@ class ChecklistGeneratorApiTests(TestCase):
 
         self.assertEqual(response.status_code, 202)
         job_payload = response.json()["job"]
+        uuid.UUID(job_payload["id"])
         self.assertEqual(job_payload["status"], "done")
         self.assertTrue(job_payload["previewUrl"])
         self.assertTrue(job_payload["downloadUrl"])

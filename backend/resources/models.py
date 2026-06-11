@@ -1,3 +1,4 @@
+import uuid
 from pathlib import Path
 
 from django.conf import settings
@@ -33,6 +34,7 @@ class Resource(models.Model):
         CHECKLIST = "checklist", "Volunteer Checklist"
         EDUCATIONAL = "educational", "Educational Resource"
 
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     title = models.CharField(max_length=180)
     description = models.TextField(blank=True)
     category = models.CharField(max_length=20, choices=Category.choices)
@@ -81,6 +83,7 @@ class ChecklistJob(models.Model):
         DONE = "done", "Done"
         ERROR = "error", "Error"
 
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="checklist_jobs")
     input_filename = models.CharField(max_length=255)
     output_filename = models.CharField(max_length=255, blank=True)

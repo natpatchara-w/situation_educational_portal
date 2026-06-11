@@ -31,6 +31,16 @@ Verification:
 
 - `uv run python backend/manage.py test resources`
 
+## SEC-10: UUID public identifiers
+
+- Added UUID public identifiers for resources and checklist jobs.
+- Switched API payload IDs and download/preview URLs from integer IDs to UUIDs.
+- Kept integer primary keys internal for database relations and background tasks.
+
+Verification:
+
+- `uv run python backend/manage.py test resources`
+
 ## SEC-08: CSP and security header controls
 
 - Added configurable CSP middleware for Django responses with production-enabled defaults.

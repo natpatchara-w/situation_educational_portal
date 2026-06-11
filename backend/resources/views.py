@@ -99,14 +99,14 @@ def resource_list(request):
         {
             "resources": [
                 {
-                    "id": resource.id,
+                    "id": str(resource.public_id),
                     "title": resource.title,
                     "description": resource.description,
                     "category": resource.category,
                     "categoryLabel": resource.get_category_display(),
                     "fileType": _resource_file_type(resource),
                     "uploadedAt": resource.uploaded_at.isoformat(),
-                    "downloadUrl": f"/api/resources/{resource.id}/download/",
+                    "downloadUrl": f"/api/resources/{resource.public_id}/download/",
                 }
                 for resource in resources
             ]
@@ -118,7 +118,7 @@ def resource_list(request):
 @require_GET
 def resource_download(request, resource_id):
     try:
-        resource = Resource.objects.get(id=resource_id, is_active=True)
+        resource = Resource.objects.get(public_id=resource_id, is_active=True)
     except Resource.DoesNotExist as exc:
         raise Http404("Resource not found.") from exc
 
@@ -213,7 +213,7 @@ def _serialize_user(user):
 
 def _serialize_checklist_job(job):
     return {
-        "id": job.id,
+        "id": str(job.public_id),
         "inputFilename": job.input_filename,
         "outputFilename": job.output_filename or "volunteer-checklist.pdf",
         "status": job.status,
@@ -221,14 +221,14 @@ def _serialize_checklist_job(job):
         "createdAt": job.created_at.isoformat(),
         "updatedAt": job.updated_at.isoformat(),
         "expiresAt": job.expires_at.isoformat(),
-        "previewUrl": f"/api/checklists/jobs/{job.id}/preview/" if job.status == ChecklistJob.Status.DONE else "",
-        "downloadUrl": f"/api/checklists/jobs/{job.id}/download/" if job.status == ChecklistJob.Status.DONE else "",
+        "previewUrl": f"/api/checklists/jobs/{job.public_id}/preview/" if job.status == ChecklistJob.Status.DONE else "",
+        "downloadUrl": f"/api/checklists/jobs/{job.public_id}/download/" if job.status == ChecklistJob.Status.DONE else "",
     }
 
 
 def _get_current_checklist_job(user, job_id):
     try:
-        return ChecklistJob.objects.get(id=job_id, user=user, expires_at__gt=timezone.now())
+        return ChecklistJob.objects.get(public_id=job_id, user=user, expires_at__gt=timezone.now())
     except ChecklistJob.DoesNotExist as exc:
         raise Http404("Checklist job not found.") from exc
 
