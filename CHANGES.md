@@ -31,6 +31,16 @@ Verification:
 
 - `uv run python backend/manage.py test resources`
 
+## SEC-09: Strict configured CORS
+
+- Replaced the local-dev CORS middleware naming with explicit configured-origin CORS behavior.
+- Kept credentialed CORS restricted to exact `DJANGO_FRONTEND_ORIGINS` matches.
+- Added tests for allowed and blocked origins.
+
+Verification:
+
+- `uv run python backend/manage.py test resources`
+
 ## SEC-07: Database-backed throttling
 
 - Added hashed database throttle records for API login, admin login, and checklist job creation.

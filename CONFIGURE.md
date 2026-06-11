@@ -51,6 +51,13 @@ CELERY_BROKER_URL=redis://redis.example.org:6379/0
 CELERY_RESULT_BACKEND=redis://redis.example.org:6379/0
 ```
 
+For multiple frontend origins, provide comma-separated exact origins:
+
+```bash
+DJANGO_FRONTEND_ORIGINS=https://portal.example.org,https://staging-portal.example.org
+DJANGO_CSRF_TRUSTED_ORIGINS=https://portal.example.org,https://staging-portal.example.org
+```
+
 Generate an encryption key for encrypted application secrets:
 
 ```bash

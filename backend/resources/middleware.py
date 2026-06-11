@@ -4,8 +4,8 @@ from django.http import HttpResponse
 from .throttling import client_ip, is_throttled, throttle_key
 
 
-class LocalDevCorsMiddleware:
-    """Allow the Vite dev server to use cookie-based Django sessions."""
+class ConfiguredCorsMiddleware:
+    """Allow exact configured frontend origins to use cookie-based Django sessions."""
 
     def __init__(self, get_response):
         self.get_response = get_response
@@ -23,6 +23,7 @@ class LocalDevCorsMiddleware:
             response["Access-Control-Allow-Headers"] = "Content-Type, X-CSRFToken"
             response["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
             response["Access-Control-Expose-Headers"] = "Content-Disposition"
+            response["Vary"] = "Origin"
         return response
 
 

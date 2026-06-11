@@ -93,6 +93,17 @@ class ResourceApiTests(TestCase):
         payload = response.json()
         self.assertEqual(len(payload["resources"]), 2)
 
+    def test_cors_allows_configured_frontend_origin(self):
+        response = self.client.options(reverse("api-resource-list"), HTTP_ORIGIN="http://localhost:5173")
+
+        self.assertEqual(response["Access-Control-Allow-Origin"], "http://localhost:5173")
+        self.assertEqual(response["Access-Control-Allow-Credentials"], "true")
+
+    def test_cors_blocks_unconfigured_origin(self):
+        response = self.client.options(reverse("api-resource-list"), HTTP_ORIGIN="https://evil.example")
+
+        self.assertNotIn("Access-Control-Allow-Origin", response)
+
     def test_search_and_category_filters_resources(self):
         self.client.login(username="volunteer", password="test-password")
 
