@@ -1,6 +1,7 @@
 from pathlib import Path
 from zipfile import BadZipFile, ZipFile
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import FileExtensionValidator
 from django.db import models
@@ -55,6 +56,11 @@ class Resource(models.Model):
 
 class OpenAISettings(models.Model):
     api_key = models.CharField("OpenAI API key", max_length=255, blank=True)
+    checklist_queue_timeout_minutes = models.PositiveIntegerField(
+        "checklist queue timeout in minutes",
+        default=120,
+        help_text="Completed and failed checklist jobs disappear from each user's queue after this many minutes.",
+    )
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -68,3 +74,27 @@ class OpenAISettings(models.Model):
     def get_solo(cls):
         settings, _created = cls.objects.get_or_create(pk=1)
         return settings
+
+
+class ChecklistJob(models.Model):
+    class Status(models.TextChoices):
+        PROCESSING = "processing", "Processing"
+        DONE = "done", "Done"
+        ERROR = "error", "Error"
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="checklist_jobs")
+    input_filename = models.CharField(max_length=255)
+    output_filename = models.CharField(max_length=255, blank=True)
+    concept_note = models.FileField(upload_to="checklist_jobs/concept_notes/")
+    generated_pdf = models.FileField(upload_to="checklist_jobs/pdfs/", blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PROCESSING)
+    error_message = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    expires_at = models.DateTimeField()
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return self.input_filename
