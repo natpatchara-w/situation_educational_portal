@@ -1,13 +1,21 @@
+import json
 from io import BytesIO
+from types import SimpleNamespace
+from unittest.mock import patch
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from django.contrib.auth.models import User
+from django.contrib.auth.models import Permission
 from django.core.exceptions import ValidationError
+from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
+from django.utils import timezone
 from django.urls import reverse
+from docx import Document
 
-from .models import Resource
+from .checklist_generator import extract_docx_text
+from .models import ChecklistJob, OpenAISettings, Resource
 from .pdf_utils import build_simple_pdf
 
 
@@ -32,6 +40,17 @@ def build_simple_docx():
     with ZipFile(buffer, "w", ZIP_DEFLATED) as archive:
         archive.writestr("[Content_Types].xml", content_types_xml)
         archive.writestr("word/document.xml", document_xml)
+    return buffer.getvalue()
+
+
+def build_readable_docx(text="Volunteer checklist", include_heading=True):
+    document = Document()
+    if include_heading:
+        document.add_heading("Event Concept Note", level=1)
+    if text:
+        document.add_paragraph(text)
+    buffer = BytesIO()
+    document.save(buffer)
     return buffer.getvalue()
 
 
@@ -110,7 +129,8 @@ class ResourceApiTests(TestCase):
             response["Content-Type"],
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
-        self.assertIn("editable-checklist.docx", response["Content-Disposition"])
+        self.assertIn("editable-checklist", response["Content-Disposition"])
+        self.assertIn(".docx", response["Content-Disposition"])
 
     def test_download_rejects_missing_resource(self):
         self.client.login(username="volunteer", password="test-password")
@@ -138,3 +158,172 @@ class ResourceApiTests(TestCase):
 
         with self.assertRaises(ValidationError):
             resource.full_clean()
+
+
+class ChecklistGeneratorApiTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="volunteer", password="test-password")
+
+    def test_anonymous_users_cannot_generate_checklist(self):
+        response = self.client.post(reverse("api-checklist-generate"))
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_logged_in_user_without_permission_cannot_create_checklist_job(self):
+        self.client.login(username="volunteer", password="test-password")
+        upload = SimpleUploadedFile(
+            "concept-note.docx",
+            build_readable_docx("Marimba workshop for village students."),
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+
+        response = self.client.post(reverse("api-checklist-job-create"), {"concept_note": upload})
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_extract_docx_text_reads_paragraphs(self):
+        upload = SimpleUploadedFile(
+            "concept-note.docx",
+            build_readable_docx("Marimba workshop for village students."),
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+
+        text = extract_docx_text(upload)
+
+        self.assertIn("Event Concept Note", text)
+        self.assertIn("Marimba workshop", text)
+
+    def test_generate_checklist_returns_pdf(self):
+        self.client.login(username="volunteer", password="test-password")
+        self.user.user_permissions.add(Permission.objects.get(codename="can_generate_checklist"))
+        OpenAISettings.objects.create(api_key="sk-test")
+        upload = SimpleUploadedFile(
+            "concept-note.docx",
+            build_readable_docx("Marimba workshop for village students."),
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        output_text = json.dumps(
+            {
+                "event_title": "Marimba Workshop",
+                "source_note": "Generated from uploaded Event Concept Note.",
+                "sections": [
+                    {
+                        "title": "Quick checklist",
+                        "items": ["Confirm with organizer: meeting point.", "Bring water and notebook."],
+                    }
+                ],
+            }
+        )
+
+        with patch("resources.checklist_generator.OpenAI") as openai:
+            openai.return_value.responses.create.return_value = SimpleNamespace(output_text=output_text)
+            response = self.client.post(reverse("api-checklist-generate"), {"concept_note": upload})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertIn("attachment", response["Content-Disposition"])
+        self.assertTrue(response.content.startswith(b"%PDF-"))
+        openai.return_value.responses.create.assert_called_once()
+        call_kwargs = openai.return_value.responses.create.call_args.kwargs
+        self.assertEqual(call_kwargs["model"], "gpt-5.5")
+        self.assertEqual(call_kwargs["reasoning"], {"effort": "medium"})
+
+    def test_generate_checklist_rejects_invalid_docx(self):
+        self.client.login(username="volunteer", password="test-password")
+        self.user.user_permissions.add(Permission.objects.get(codename="can_generate_checklist"))
+        upload = SimpleUploadedFile(
+            "concept-note.docx",
+            b"not a docx",
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+
+        response = self.client.post(reverse("api-checklist-generate"), {"concept_note": upload})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("readable DOCX", response.json()["detail"])
+
+    def test_generate_checklist_rejects_empty_docx(self):
+        self.client.login(username="volunteer", password="test-password")
+        self.user.user_permissions.add(Permission.objects.get(codename="can_generate_checklist"))
+        upload = SimpleUploadedFile(
+            "empty.docx",
+            build_readable_docx("", include_heading=False),
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+
+        response = self.client.post(reverse("api-checklist-generate"), {"concept_note": upload})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("does not contain readable text", response.json()["detail"])
+
+    def test_generate_checklist_requires_openai_key(self):
+        self.client.login(username="volunteer", password="test-password")
+        self.user.user_permissions.add(Permission.objects.get(codename="can_generate_checklist"))
+        upload = SimpleUploadedFile(
+            "concept-note.docx",
+            build_readable_docx("Marimba workshop for village students."),
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+
+        response = self.client.post(reverse("api-checklist-generate"), {"concept_note": upload})
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("OpenAI API key is not configured", response.json()["detail"])
+
+    def test_create_checklist_job_persists_pdf_for_preview_and_download(self):
+        self.client.login(username="volunteer", password="test-password")
+        self.user.user_permissions.add(Permission.objects.get(codename="can_generate_checklist"))
+        OpenAISettings.objects.create(api_key="sk-test", checklist_queue_timeout_minutes=45)
+        upload = SimpleUploadedFile(
+            "concept-note.docx",
+            build_readable_docx("Marimba workshop for village students."),
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        output_text = json.dumps(
+            {
+                "event_title": "Marimba Workshop",
+                "source_note": "Generated from uploaded Event Concept Note.",
+                "sections": [{"title": "Quick checklist", "items": ["Bring water and notebook."]}],
+            }
+        )
+
+        with patch("resources.checklist_generator.OpenAI") as openai:
+            openai.return_value.responses.create.return_value = SimpleNamespace(output_text=output_text)
+            response = self.client.post(reverse("api-checklist-job-create"), {"concept_note": upload})
+
+        self.assertEqual(response.status_code, 200)
+        job_payload = response.json()["job"]
+        self.assertEqual(job_payload["status"], "done")
+        self.assertTrue(job_payload["previewUrl"])
+        self.assertTrue(job_payload["downloadUrl"])
+
+        list_response = self.client.get(reverse("api-checklist-job-list"))
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(len(list_response.json()["jobs"]), 1)
+
+        preview_response = self.client.get(reverse("api-checklist-job-preview", args=[job_payload["id"]]))
+        self.assertEqual(preview_response.status_code, 200)
+        self.assertEqual(preview_response["Content-Type"], "application/pdf")
+        self.assertIn("inline", preview_response["Content-Disposition"])
+
+        download_response = self.client.get(reverse("api-checklist-job-download", args=[job_payload["id"]]))
+        self.assertEqual(download_response.status_code, 200)
+        self.assertIn("attachment", download_response["Content-Disposition"])
+
+    def test_checklist_job_list_hides_expired_jobs(self):
+        self.client.login(username="volunteer", password="test-password")
+        self.user.user_permissions.add(Permission.objects.get(codename="can_generate_checklist"))
+        expired_job = ChecklistJob.objects.create(
+            user=self.user,
+            input_filename="expired.docx",
+            concept_note=SimpleUploadedFile("expired.docx", build_readable_docx(), content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+            output_filename="expired.pdf",
+            status=ChecklistJob.Status.DONE,
+            expires_at=timezone.now() - timezone.timedelta(minutes=1),
+        )
+        expired_job.generated_pdf.save("expired.pdf", ContentFile(build_simple_pdf("Expired", "Expired")), save=True)
+
+        response = self.client.get(reverse("api-checklist-job-list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["jobs"], [])
