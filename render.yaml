@@ -9,7 +9,7 @@ services:
     region: singapore
     plan: free
     buildCommand: python -m pip install --upgrade pip uv && uv sync --locked && uv run python backend/manage.py collectstatic --noinput
-    startCommand: uv run python backend/manage.py migrate --noinput && PYTHONPATH=backend uv run gunicorn volunteer_portal.wsgi:application
+    startCommand: uv run python backend/manage.py migrate --noinput && PYTHONPATH=backend uv run gunicorn volunteer_portal.wsgi:application --workers 1 --threads 4 --timeout 180 --graceful-timeout 30
     healthCheckPath: /api/auth/csrf/
     autoDeployTrigger: commit
     envVars:
