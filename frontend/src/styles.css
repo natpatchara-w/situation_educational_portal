@@ -77,12 +77,19 @@ textarea {
   gap: 16px;
 }
 
+.brand-marks {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
 .brand-mark {
   display: inline-grid;
   place-items: center;
   flex: 0 0 auto;
-  width: 76px;
-  height: 76px;
+  width: 68px;
+  height: 68px;
   overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--brand-border);
@@ -90,9 +97,9 @@ textarea {
   box-shadow: 0 10px 24px rgba(0, 56, 112, 0.1);
 }
 
-.brand-mark.compact {
-  width: 58px;
-  height: 58px;
+.brand-marks.compact .brand-mark {
+  width: 52px;
+  height: 52px;
 }
 
 .brand-mark img {

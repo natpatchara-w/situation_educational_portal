@@ -28,7 +28,10 @@ const API_BASE = (
   configuredApiBase || (import.meta.env.DEV ? `http://${window.location.hostname}:8000` : window.location.origin)
 ).replace(/\/$/, "");
 
-const ORGANIZATION_LOGO_SRC = "/brand/logo-umn-emblem.png";
+const ORGANIZATION_LOGOS = [
+  { src: "/brand/logo-umn-emblem.png", alt: "UMN Universitas Multimedia Nusantara" },
+  { src: "/brand/logo-gmls.png", alt: "Gugus Mitigasi Lebak Selatan" },
+];
 const LANGUAGE_STORAGE_KEY = "volunteerPortalLanguage";
 let csrfToken = "";
 let authToken = window.localStorage.getItem("volunteerAuthToken") || "";
@@ -433,7 +436,7 @@ function App() {
     <main className="app-shell">
       <header className="topbar">
         <div className="brand-heading">
-          <BrandMark compact />
+          <BrandMarks compact />
           <div>
             <p className="eyebrow">{t("appEyebrow")}</p>
             <h1>{t(PAGE_TITLES[activePage] || PAGE_TITLES.library)}</h1>
@@ -1281,7 +1284,7 @@ function LoginScreen({ language, onLanguageChange, onLogin, t }) {
       <section className="login-panel">
         <div className="login-header">
           <div className="login-title">
-            <BrandMark />
+            <BrandMarks />
             <div>
               <p className="eyebrow">{t("loginEyebrow")}</p>
               <h1>{t("signInHeading")}</h1>
@@ -1313,10 +1316,14 @@ function LoginScreen({ language, onLanguageChange, onLogin, t }) {
   );
 }
 
-function BrandMark({ compact = false }) {
+function BrandMarks({ compact = false }) {
   return (
-    <span className={`brand-mark${compact ? " compact" : ""}`}>
-      <img src={ORGANIZATION_LOGO_SRC} alt="UMN Universitas Multimedia Nusantara" />
+    <span className={`brand-marks${compact ? " compact" : ""}`}>
+      {ORGANIZATION_LOGOS.map((logo) => (
+        <span className="brand-mark" key={logo.src}>
+          <img src={logo.src} alt={logo.alt} />
+        </span>
+      ))}
     </span>
   );
 }
