@@ -55,6 +55,8 @@ services:
         value: "True"
       - key: DJANGO_CHAT_VECTOR_SEARCH_ENABLED
         value: "False"
+      - key: OPENAI_CHAT_REASONING_EFFORT
+        value: low
 
   - type: web
     runtime: static
