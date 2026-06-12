@@ -1,14 +1,16 @@
 import json
 from pathlib import Path
+from functools import wraps
 
-from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth import authenticate, get_user_model, login, logout
 from django.core.files.base import ContentFile
+from django.core import signing
 from django.db.models import Q
 from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.utils import timezone
 from django.utils.text import get_valid_filename
 from django.middleware.csrf import get_token
-from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
+from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
 from .checklist_generator import (
@@ -26,18 +28,24 @@ CONTENT_TYPES = {
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".pdf": "application/pdf",
 }
+AUTH_TOKEN_MAX_AGE_SECONDS = 60 * 60 * 24 * 14
+AUTH_TOKEN_SALT = "resources.auth-token"
 
 
 def api_login_required(view_func):
+    @wraps(view_func)
     def wrapper(request, *args, **kwargs):
-        if not request.user.is_authenticated:
+        user = _get_authenticated_user(request)
+        if user is None:
             return JsonResponse({"detail": "Authentication required."}, status=401)
+        request.user = user
         return view_func(request, *args, **kwargs)
 
     return wrapper
 
 
 def checklist_permission_required(view_func):
+    @wraps(view_func)
     def wrapper(request, *args, **kwargs):
         if not request.user.has_perm("resources.can_generate_checklist"):
             return JsonResponse({"detail": "Checklist generation permission required."}, status=403)
@@ -53,7 +61,7 @@ def csrf(request):
 
 
 @require_POST
-@csrf_protect
+@csrf_exempt
 def login_view(request):
     try:
         payload = json.loads(request.body.decode("utf-8"))
@@ -68,11 +76,11 @@ def login_view(request):
         return JsonResponse({"detail": "Invalid username or password."}, status=400)
 
     login(request, user)
-    return JsonResponse(_serialize_user(user))
+    return JsonResponse({**_serialize_user(user), "authToken": _make_auth_token(user)})
 
 
 @require_POST
-@csrf_protect
+@csrf_exempt
 def logout_view(request):
     logout(request)
     return JsonResponse({"detail": "Logged out."})
@@ -80,9 +88,10 @@ def logout_view(request):
 
 @require_GET
 def me_view(request):
-    if not request.user.is_authenticated:
+    user = _get_authenticated_user(request)
+    if user is None:
         return JsonResponse({"detail": "Authentication required."}, status=401)
-    return JsonResponse(_serialize_user(request.user))
+    return JsonResponse(_serialize_user(user))
 
 
 @api_login_required
@@ -134,7 +143,7 @@ def resource_download(request, resource_id):
 @api_login_required
 @checklist_permission_required
 @require_POST
-@csrf_protect
+@csrf_exempt
 def checklist_generate(request):
     concept_note = request.FILES.get("concept_note")
     if concept_note is None:
@@ -169,7 +178,7 @@ def checklist_job_list(request):
 @api_login_required
 @checklist_permission_required
 @require_POST
-@csrf_protect
+@csrf_exempt
 def checklist_job_create(request):
     concept_note = request.FILES.get("concept_note")
     if concept_note is None:
@@ -239,6 +248,37 @@ def checklist_job_download(request, job_id):
     response = FileResponse(job.generated_pdf.open("rb"), content_type="application/pdf")
     response["Content-Disposition"] = f'attachment; filename="{get_valid_filename(job.output_filename)}"'
     return response
+
+
+def _make_auth_token(user):
+    return signing.dumps({"user_id": user.pk}, salt=AUTH_TOKEN_SALT)
+
+
+def _get_authenticated_user(request):
+    bearer_user = _get_bearer_user(request)
+    if bearer_user is not None:
+        return bearer_user
+    if request.user.is_authenticated:
+        return request.user
+    return None
+
+
+def _get_bearer_user(request):
+    authorization = request.headers.get("Authorization", "")
+    scheme, _separator, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        return None
+
+    try:
+        payload = signing.loads(token, salt=AUTH_TOKEN_SALT, max_age=AUTH_TOKEN_MAX_AGE_SECONDS)
+    except signing.BadSignature:
+        return None
+
+    User = get_user_model()
+    try:
+        return User.objects.get(pk=payload.get("user_id"), is_active=True)
+    except User.DoesNotExist:
+        return None
 
 
 def _serialize_user(user):

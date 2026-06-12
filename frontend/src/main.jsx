@@ -23,6 +23,7 @@ const CATEGORIES = [
   { value: "educational", label: "Educational Resources" },
 ];
 let csrfToken = "";
+let authToken = window.localStorage.getItem("volunteerAuthToken") || "";
 
 function getApiBase() {
   const configuredBase =
@@ -45,11 +46,27 @@ function rememberCsrfToken(payload) {
   if (payload?.csrfToken) csrfToken = payload.csrfToken;
 }
 
+function rememberAuthToken(payload) {
+  if (!payload?.authToken) return;
+  authToken = payload.authToken;
+  window.localStorage.setItem("volunteerAuthToken", authToken);
+}
+
+function forgetAuthToken() {
+  authToken = "";
+  window.localStorage.removeItem("volunteerAuthToken");
+}
+
+function getAuthHeaders() {
+  return authToken ? { Authorization: `Bearer ${authToken}` } : {};
+}
+
 async function apiFetch(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
     credentials: "include",
     headers: {
       "Content-Type": "application/json",
+      ...getAuthHeaders(),
       ...(options.method && options.method !== "GET" ? { "X-CSRFToken": getCsrfToken() } : {}),
       ...options.headers,
     },
@@ -58,8 +75,10 @@ async function apiFetch(path, options = {}) {
 
   const payload = await response.json().catch(() => ({}));
   rememberCsrfToken(payload);
+  rememberAuthToken(payload);
 
   if (!response.ok) {
+    if (response.status === 401) forgetAuthToken();
     throw new Error(payload.detail || "Something went wrong.");
   }
 
@@ -139,7 +158,8 @@ function App() {
   }
 
   async function handleLogout() {
-    await apiFetch("/api/auth/logout/", { method: "POST" });
+    await apiFetch("/api/auth/logout/", { method: "POST" }).catch(() => {});
+    forgetAuthToken();
     setUser(null);
     setResources([]);
     setSearch("");
@@ -510,6 +530,7 @@ async function createQueueJob(item) {
     method: "POST",
     credentials: "include",
     headers: {
+      ...getAuthHeaders(),
       "X-CSRFToken": getCsrfToken(),
     },
     body: formData,
@@ -524,6 +545,7 @@ async function createQueueJob(item) {
 async function fetchPdfBlobUrl(path) {
   const response = await fetch(`${API_BASE}${path}`, {
     credentials: "include",
+    headers: getAuthHeaders(),
   });
 
   if (!response.ok) {
@@ -533,6 +555,28 @@ async function fetchPdfBlobUrl(path) {
 
   const blob = await response.blob();
   return window.URL.createObjectURL(blob);
+}
+
+async function downloadProtectedFile(path, fallbackFilename) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    credentials: "include",
+    headers: getAuthHeaders(),
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.detail || "Could not download the file.");
+  }
+
+  const blob = await response.blob();
+  const url = window.URL.createObjectURL(blob);
+  downloadUrl(url, getFilenameFromDisposition(response.headers.get("Content-Disposition")) || fallbackFilename);
+  window.setTimeout(() => window.URL.revokeObjectURL(url), 1000);
+}
+
+function getFilenameFromDisposition(value) {
+  const match = value?.match(/filename="?([^"]+)"?/i);
+  return match?.[1];
 }
 
 function getQueueStatusLabel(item) {
@@ -634,7 +678,6 @@ function SummaryItem({ icon, label, value }) {
 
 function ResourceCard({ resource }) {
   const uploaded = new Intl.DateTimeFormat("en", { dateStyle: "medium" }).format(new Date(resource.uploadedAt));
-  const downloadHref = `${API_BASE}${resource.downloadUrl}`;
 
   return (
     <article className="resource-card">
@@ -647,10 +690,14 @@ function ResourceCard({ resource }) {
       <p>{resource.description || "No description provided."}</p>
       <div className="card-footer">
         <span>Uploaded {uploaded}</span>
-        <a className="download-button" href={downloadHref}>
+        <button
+          className="download-button"
+          onClick={() => downloadProtectedFile(resource.downloadUrl, resource.title)}
+          type="button"
+        >
           <Download size={17} />
           Download
-        </a>
+        </button>
       </div>
     </article>
   );
