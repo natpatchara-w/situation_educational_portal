@@ -3,6 +3,8 @@ from pathlib import Path
 
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
+from django.core.exceptions import ValidationError
+from django.db import IntegrityError
 from django.db.models import Q
 from django.http import FileResponse, Http404, JsonResponse
 from django.utils import timezone
@@ -11,7 +13,14 @@ from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
 from .audit import audit_event
-from .models import ChecklistJob, OpenAISettings, Resource
+from .education_chat import (
+    EducationChatConfigurationError,
+    EducationChatError,
+    EducationChatProviderError,
+    answer_volunteer_question,
+    is_public_website_url,
+)
+from .models import ChatSource, ChecklistJob, OpenAISettings, Resource
 from .tasks import generate_checklist_job
 from .throttling import client_ip, is_throttled, reset_throttle, throttle_key
 
@@ -35,6 +44,15 @@ def checklist_permission_required(view_func):
     def wrapper(request, *args, **kwargs):
         if not request.user.has_perm("resources.can_generate_checklist"):
             return JsonResponse({"detail": "Checklist generation permission required."}, status=403)
+        return view_func(request, *args, **kwargs)
+
+    return wrapper
+
+
+def staff_required(view_func):
+    def wrapper(request, *args, **kwargs):
+        if not request.user.is_staff:
+            return JsonResponse({"detail": "Staff permission required."}, status=403)
         return view_func(request, *args, **kwargs)
 
     return wrapper
@@ -218,6 +236,120 @@ def checklist_job_download(request, job_id):
     return response
 
 
+@api_login_required
+@require_POST
+@csrf_protect
+def chat_reply(request):
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+    except json.JSONDecodeError:
+        return JsonResponse({"detail": "Invalid JSON payload."}, status=400)
+
+    message = str(payload.get("message", "")).strip()
+    if not message:
+        return JsonResponse({"detail": "Enter a question for the education chat."}, status=400)
+    if len(message) > settings.CHAT_MAX_MESSAGE_CHARS:
+        return JsonResponse({"detail": "Chat message is too long."}, status=400)
+
+    openai_settings = OpenAISettings.get_solo()
+    try:
+        result = answer_volunteer_question(
+            user=request.user,
+            question=message,
+            history=payload.get("history", []),
+            api_key=openai_settings.api_key.strip(),
+        )
+    except EducationChatConfigurationError as exc:
+        return JsonResponse({"detail": str(exc)}, status=503)
+    except EducationChatProviderError as exc:
+        return JsonResponse({"detail": str(exc)}, status=503)
+    except EducationChatError as exc:
+        return JsonResponse({"detail": str(exc)}, status=400)
+
+    audit_event("education_chat_reply", request=request, source_count=len(result.sources))
+    return JsonResponse(
+        {
+            "reply": result.answer,
+            "sources": result.sources,
+            "provider": "OpenAI",
+            "model": settings.OPENAI_CHAT_MODEL,
+            "reasoningEffort": settings.OPENAI_CHAT_REASONING_EFFORT,
+        }
+    )
+
+
+@api_login_required
+@staff_required
+@require_GET
+def chat_source_list(request):
+    return JsonResponse({"sources": [_serialize_chat_source(source) for source in ChatSource.objects.all()]})
+
+
+@api_login_required
+@staff_required
+@require_POST
+@csrf_protect
+def chat_source_create(request):
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+    except json.JSONDecodeError:
+        return JsonResponse({"detail": "Invalid JSON payload."}, status=400)
+
+    title = str(payload.get("title", "")).strip()[:180]
+    url = str(payload.get("url", "")).strip()
+    if not is_public_website_url(url):
+        return JsonResponse({"detail": "Enter a public http or https website URL."}, status=400)
+
+    source = ChatSource(title=title, url=url, created_by=request.user)
+    try:
+        source.full_clean()
+        source.save()
+    except ValidationError as exc:
+        return JsonResponse({"detail": _validation_message(exc)}, status=400)
+    except IntegrityError:
+        return JsonResponse({"detail": "This website is already in chat settings."}, status=400)
+
+    audit_event("chat_source_created", request=request, source_id=source.public_id, source_url=source.url)
+    return JsonResponse({"source": _serialize_chat_source(source)}, status=201)
+
+
+@api_login_required
+@staff_required
+@require_POST
+@csrf_protect
+def chat_source_update(request, source_id):
+    source = _get_chat_source(source_id)
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+    except json.JSONDecodeError:
+        return JsonResponse({"detail": "Invalid JSON payload."}, status=400)
+
+    if "title" in payload:
+        source.title = str(payload.get("title", "")).strip()[:180]
+    if "isActive" in payload:
+        source.is_active = bool(payload.get("isActive"))
+
+    try:
+        source.full_clean()
+        source.save(update_fields=["title", "is_active", "updated_at"])
+    except ValidationError as exc:
+        return JsonResponse({"detail": _validation_message(exc)}, status=400)
+
+    audit_event("chat_source_updated", request=request, source_id=source.public_id, source_url=source.url)
+    return JsonResponse({"source": _serialize_chat_source(source)})
+
+
+@api_login_required
+@staff_required
+@require_POST
+@csrf_protect
+def chat_source_delete(request, source_id):
+    source = _get_chat_source(source_id)
+    audit_event("chat_source_deleted", request=request, source_id=source.public_id, source_url=source.url)
+    source.delete()
+    return JsonResponse({"detail": "Website removed."})
+
+
 def _serialize_user(user):
     return {
         "id": user.id,
@@ -267,3 +399,31 @@ def _resource_file_type(resource):
     if extension == ".pdf":
         return "PDF"
     return extension.lstrip(".").upper() or "FILE"
+
+
+def _serialize_chat_source(source):
+    return {
+        "id": str(source.public_id),
+        "title": source.title,
+        "url": source.url,
+        "isActive": source.is_active,
+        "createdAt": source.created_at.isoformat(),
+        "updatedAt": source.updated_at.isoformat(),
+    }
+
+
+def _get_chat_source(source_id):
+    try:
+        return ChatSource.objects.get(public_id=source_id)
+    except ChatSource.DoesNotExist as exc:
+        raise Http404("Website source not found.") from exc
+
+
+def _validation_message(exc):
+    if hasattr(exc, "message_dict"):
+        for messages in exc.message_dict.values():
+            if messages:
+                return messages[0]
+    if getattr(exc, "messages", None):
+        return exc.messages[0]
+    return str(exc)

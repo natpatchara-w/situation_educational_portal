@@ -231,9 +231,29 @@ DJANGO_CHECKLIST_MAX_SECTIONS=20
 DJANGO_CHECKLIST_MAX_ITEMS_PER_SECTION=40
 ```
 
+The volunteer education chat uses LangChain + LangGraph with the stored OpenAI API key. By default it uses medium reasoning with `gpt-5.4-mini`, and grounds answers on visible educational resources, staff-approved website sources from the in-app Settings page, linked source documents, and built-in portal glossary entries for core disaster education terms. Retrieval uses bilingual query expansion plus hybrid vector/string ranking so English questions can still match Indonesian source text such as `gempa bumi` and `gempabumi`:
+
+```bash
+OPENAI_CHAT_MODEL=gpt-5.4-mini
+OPENAI_CHAT_REASONING_EFFORT=medium
+OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+DJANGO_CHAT_MAX_MESSAGE_CHARS=3000
+DJANGO_CHAT_MAX_GROUNDING_SOURCES=8
+DJANGO_CHAT_MAX_LINKED_SOURCES_PER_WEBSITE=8
+DJANGO_CHAT_SOURCE_FETCH_TIMEOUT_SECONDS=8
+DJANGO_CHAT_VECTOR_SEARCH_ENABLED=true
+DJANGO_CHAT_VECTOR_MAX_CANDIDATES=64
+DJANGO_CHAT_HYBRID_STRING_WEIGHT=55
+DJANGO_CHAT_HYBRID_VECTOR_WEIGHT=45
+DJANGO_CHAT_HYBRID_RRF_K=60
+```
+
+Staff users can add public `http` or `https` website sources in Settings. The chat fetches active website sources at answer time, searches linked HTML/text/PDF/DOCX sources discovered from those pages, and skips localhost, private IP, redirects, and non-web URLs.
+
 Before production use:
 
 - Inform admins and authorized checklist generators that concept notes are processed by OpenAI.
+- Inform volunteers that education chat questions are processed by OpenAI and grounded on portal resources plus configured websites.
 - The API requires an `ai_processing_acknowledged=true` form field before queueing a checklist job.
 - Avoid uploading secrets, credentials, or unnecessary personal data.
 - Keep provider project spend limits and monitoring enabled.

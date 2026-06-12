@@ -10,7 +10,12 @@ import {
   Library,
   LoaderCircle,
   LogOut,
+  MessageCircle,
+  Plus,
   Search,
+  Send,
+  Settings,
+  Trash2,
   Upload,
   WandSparkles,
 } from "lucide-react";
@@ -25,6 +30,12 @@ const CATEGORIES = [
   { value: "checklist", label: "Volunteer Checklists" },
   { value: "educational", label: "Educational Resources" },
 ];
+const PAGE_TITLES = {
+  library: "Resource Library",
+  chat: "Education Chat",
+  generator: "Generate Checklist",
+  settings: "Settings",
+};
 
 function getCookie(name) {
   return document.cookie
@@ -150,7 +161,7 @@ function App() {
       <header className="topbar">
         <div>
           <p className="eyebrow">Student Volunteer Portal</p>
-          <h1>{activePage === "library" ? "Resource Library" : "Generate Checklist"}</h1>
+          <h1>{PAGE_TITLES[activePage] || PAGE_TITLES.library}</h1>
         </div>
         <button className="ghost-button" onClick={handleLogout} type="button">
           <LogOut size={18} />
@@ -163,15 +174,29 @@ function App() {
           <Library size={18} />
           Resource Library
         </button>
+        <button className={activePage === "chat" ? "active" : ""} onClick={() => setActivePage("chat")} type="button">
+          <MessageCircle size={18} />
+          Education Chat
+        </button>
         {user.canGenerateChecklist && (
           <button className={activePage === "generator" ? "active" : ""} onClick={selectGeneratorPage} type="button">
             <WandSparkles size={18} />
             Generate Checklist
           </button>
         )}
+        {user.isStaff && (
+          <button className={activePage === "settings" ? "active" : ""} onClick={() => setActivePage("settings")} type="button">
+            <Settings size={18} />
+            Settings
+          </button>
+        )}
       </nav>
 
-      {activePage === "generator" && user.canGenerateChecklist ? (
+      {activePage === "chat" ? (
+        <EducationChat />
+      ) : activePage === "settings" && user.isStaff ? (
+        <SettingsPage />
+      ) : activePage === "generator" && user.canGenerateChecklist ? (
         <ChecklistGenerator />
       ) : (
         <ResourceLibrary
@@ -239,6 +264,283 @@ function ResourceLibrary({ category, error, loading, resourceCounts, resources, 
         </section>
       )}
     </>
+  );
+}
+
+function EducationChat() {
+  const [messages, setMessages] = useState([
+    {
+      id: "welcome",
+      role: "assistant",
+      content: "Ask a question about the portal education resources.",
+      sources: [],
+    },
+  ]);
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  const messagesRef = useRef(null);
+
+  useEffect(() => {
+    if (!messagesRef.current) return;
+    messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
+  }, [messages]);
+
+  async function submit(event) {
+    event.preventDefault();
+    const content = draft.trim();
+    if (!content || sending) return;
+
+    const userMessage = {
+      id: `user-${Date.now()}`,
+      role: "user",
+      content,
+      sources: [],
+    };
+    const pendingId = `assistant-${Date.now()}`;
+    const history = messages
+      .filter((item) => item.role === "user" || item.role === "assistant")
+      .map((item) => ({ role: item.role, content: item.content }))
+      .slice(-8);
+
+    setMessages((items) => [
+      ...items,
+      userMessage,
+      { id: pendingId, role: "assistant", content: "Searching education resources...", sources: [], pending: true },
+    ]);
+    setDraft("");
+    setSending(true);
+    setError("");
+
+    try {
+      const payload = await apiFetch("/api/chat/", {
+        method: "POST",
+        body: JSON.stringify({ message: content, history }),
+      });
+      setMessages((items) =>
+        items.map((item) =>
+          item.id === pendingId
+            ? {
+                ...item,
+                content: payload.reply,
+                sources: payload.sources || [],
+                provider: payload.provider,
+                model: payload.model,
+                reasoningEffort: payload.reasoningEffort,
+                pending: false,
+              }
+            : item,
+        ),
+      );
+    } catch (err) {
+      setMessages((items) =>
+        items.map((item) =>
+          item.id === pendingId
+            ? { ...item, content: err.message, sources: [], pending: false, error: true }
+            : item,
+        ),
+      );
+      setError(err.message);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <section className="chat-workspace" aria-label="Education resource chat">
+      <div className="chat-thread" ref={messagesRef}>
+        {messages.map((message) => (
+          <article className={`chat-message ${message.role} ${message.error ? "error" : ""}`} key={message.id}>
+            <div className="chat-bubble">
+              {message.pending && <LoaderCircle className="spin" size={18} />}
+              {message.model && !message.error && (
+                <small className="model-badge">
+                  {message.provider || "OpenAI"} {message.model} · {message.reasoningEffort} reasoning
+                </small>
+              )}
+              <p>{message.content}</p>
+              {message.sources?.length > 0 && <ChatSources sources={message.sources} />}
+            </div>
+          </article>
+        ))}
+      </div>
+
+      <form className="chat-composer" onSubmit={submit}>
+        {error && <p className="notice error">{error}</p>}
+        <label className="chat-input">
+          <textarea
+            rows={3}
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                submit(event);
+              }
+            }}
+            placeholder="Ask about safety, preparedness, evacuation, or volunteer learning materials"
+          />
+        </label>
+        <button className="primary-button send-button" disabled={sending || !draft.trim()} type="submit">
+          {sending ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />}
+          Send
+        </button>
+      </form>
+    </section>
+  );
+}
+
+function ChatSources({ sources }) {
+  return (
+    <div className="chat-sources" aria-label="Answer sources">
+      {sources.map((source) => {
+        const locator = source.locator || "";
+        const href = locator.startsWith("http") ? locator : locator.startsWith("/") ? `${API_BASE}${locator}` : "";
+        if (!href) {
+          return (
+            <span className="source-pill" key={`${source.kind}-${source.title}`}>
+              {source.title}
+            </span>
+          );
+        }
+        return (
+          <a href={href} key={`${source.kind}-${source.locator}`} rel="noreferrer" target="_blank">
+            {source.title}
+          </a>
+        );
+      })}
+    </div>
+  );
+}
+
+function SettingsPage() {
+  const [sources, setSources] = useState([]);
+  const [title, setTitle] = useState("");
+  const [url, setUrl] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    async function loadSources() {
+      setLoading(true);
+      setError("");
+      try {
+        const payload = await apiFetch("/api/chat/sources/");
+        if (active) setSources(payload.sources || []);
+      } catch (err) {
+        if (active) setError(err.message);
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+
+    loadSources();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function addSource(event) {
+    event.preventDefault();
+    if (!url.trim()) return;
+    setSaving(true);
+    setError("");
+
+    try {
+      const payload = await apiFetch("/api/chat/sources/create/", {
+        method: "POST",
+        body: JSON.stringify({ title, url }),
+      });
+      setSources((items) => [payload.source, ...items]);
+      setTitle("");
+      setUrl("");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function toggleSource(source) {
+    setError("");
+    try {
+      const payload = await apiFetch(`/api/chat/sources/${source.id}/update/`, {
+        method: "POST",
+        body: JSON.stringify({ isActive: !source.isActive }),
+      });
+      setSources((items) => items.map((item) => (item.id === source.id ? payload.source : item)));
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function deleteSource(source) {
+    setError("");
+    try {
+      await apiFetch(`/api/chat/sources/${source.id}/delete/`, { method: "POST" });
+      setSources((items) => items.filter((item) => item.id !== source.id));
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  return (
+    <section className="settings-workspace" aria-label="Education chat settings">
+      <form className="settings-form" onSubmit={addSource}>
+        <div>
+          <p className="eyebrow">Education Chat Sources</p>
+          <h2>Add Website Source</h2>
+        </div>
+        <label>
+          Label
+          <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="GMLS education page" />
+        </label>
+        <label>
+          Website URL
+          <input
+            value={url}
+            onChange={(event) => setUrl(event.target.value)}
+            placeholder="https://example.org/education"
+            type="url"
+          />
+        </label>
+        {error && <p className="notice error">{error}</p>}
+        <button className="primary-button" disabled={saving || !url.trim()} type="submit">
+          {saving ? <LoaderCircle className="spin" size={17} /> : <Plus size={17} />}
+          Add Website
+        </button>
+      </form>
+
+      <section className="source-list" aria-label="Configured website sources">
+        <div className="source-list-header">
+          <h2>Website Sources</h2>
+          {loading && <LoaderCircle className="spin" size={18} />}
+        </div>
+        {!loading && sources.length === 0 ? (
+          <p className="queue-empty">No website sources added.</p>
+        ) : (
+          sources.map((source) => (
+            <article className="source-item" key={source.id}>
+              <div>
+                <h3>{source.title || source.url}</h3>
+                <a href={source.url} rel="noreferrer" target="_blank">
+                  {source.url}
+                </a>
+              </div>
+              <label className="source-toggle">
+                <input checked={source.isActive} onChange={() => toggleSource(source)} type="checkbox" />
+                <span>{source.isActive ? "Active" : "Inactive"}</span>
+              </label>
+              <button className="icon-button danger" onClick={() => deleteSource(source)} type="button">
+                <Trash2 size={17} />
+              </button>
+            </article>
+          ))
+        )}
+      </section>
+    </section>
   );
 }
 

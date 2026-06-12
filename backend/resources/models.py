@@ -1,5 +1,6 @@
 import uuid
 from pathlib import Path
+from urllib.parse import urlparse
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -81,6 +82,33 @@ class OpenAISettings(models.Model):
     def get_solo(cls):
         settings, _created = cls.objects.get_or_create(pk=1)
         return settings
+
+
+class ChatSource(models.Model):
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    title = models.CharField(max_length=180, blank=True)
+    url = models.URLField(max_length=500, unique=True)
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="chat_sources",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["title", "url"]
+
+    def clean(self):
+        parsed = urlparse(self.url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValidationError({"url": "Enter a public http or https website URL."})
+
+    def __str__(self):
+        return self.title or self.url
 
 
 class ChecklistJob(models.Model):

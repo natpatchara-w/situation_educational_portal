@@ -18,7 +18,8 @@ body {
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
 }
 
@@ -139,7 +140,8 @@ h1 {
 .page-tabs button,
 .ghost-button,
 .primary-button,
-.download-button {
+.download-button,
+.icon-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -541,6 +543,224 @@ h1 {
   color: #596961;
 }
 
+.chat-workspace,
+.settings-workspace {
+  display: grid;
+  gap: 18px;
+}
+
+.chat-thread,
+.settings-form,
+.source-list {
+  background: #ffffff;
+  border: 1px solid #dce7da;
+  border-radius: 8px;
+  box-shadow: 0 18px 40px rgba(34, 55, 41, 0.08);
+}
+
+.chat-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 520px;
+  max-height: 64vh;
+  padding: 18px;
+  overflow-y: auto;
+}
+
+.chat-message {
+  display: flex;
+}
+
+.chat-message.user {
+  justify-content: flex-end;
+}
+
+.chat-bubble {
+  width: min(760px, 92%);
+  padding: 14px 16px;
+  color: #26352d;
+  background: #f7faf5;
+  border: 1px solid #dce7da;
+  border-radius: 8px;
+}
+
+.chat-message.user .chat-bubble {
+  color: #ffffff;
+  background: #0f5f4b;
+  border-color: #0f5f4b;
+}
+
+.chat-message.error .chat-bubble {
+  color: #a23828;
+  background: #fff7f5;
+  border-color: #efc9c1;
+}
+
+.chat-bubble p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.model-badge {
+  display: inline-flex;
+  max-width: 100%;
+  margin-bottom: 8px;
+  padding: 3px 8px;
+  color: #20513f;
+  background: #e7f4ec;
+  border: 1px solid #c5dccd;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.chat-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.chat-sources a,
+.chat-sources .source-pill {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  padding: 4px 9px;
+  color: #20513f;
+  background: #e7f4ec;
+  border: 1px solid #c5dccd;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.chat-sources a {
+  text-decoration: none;
+}
+
+.chat-composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.chat-composer .notice {
+  grid-column: 1 / -1;
+  margin-bottom: 0;
+}
+
+.chat-input textarea {
+  width: 100%;
+  min-height: 86px;
+  padding: 12px 14px;
+  color: #26352d;
+  background: #ffffff;
+  border: 1px solid #cfdcd1;
+  border-radius: 8px;
+  outline: 0;
+  resize: vertical;
+}
+
+.send-button {
+  width: auto;
+  min-width: 112px;
+  padding: 0 16px;
+}
+
+.settings-workspace {
+  grid-template-columns: minmax(280px, 0.36fr) minmax(0, 1fr);
+  align-items: start;
+}
+
+.settings-form {
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+}
+
+.settings-form h2,
+.source-list h2 {
+  margin: 0;
+  font-size: 1.24rem;
+}
+
+.settings-form label {
+  display: grid;
+  gap: 7px;
+  color: #38473e;
+  font-weight: 700;
+}
+
+.settings-form input {
+  min-height: 46px;
+  padding: 0 12px;
+  border: 1px solid #cfdcd1;
+  border-radius: 8px;
+}
+
+.source-list {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+}
+
+.source-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.source-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid #dce7da;
+  border-radius: 8px;
+}
+
+.source-item h3 {
+  margin: 0 0 4px;
+  font-size: 1rem;
+}
+
+.source-item a {
+  color: #0f5f4b;
+  overflow-wrap: anywhere;
+}
+
+.source-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #38473e;
+  font-weight: 700;
+}
+
+.source-toggle input {
+  inline-size: 18px;
+  block-size: 18px;
+  accent-color: #0f5f4b;
+}
+
+.icon-button {
+  width: 42px;
+  height: 42px;
+  color: #26352d;
+  background: #ffffff;
+  border-color: #cfdcd1;
+}
+
+.icon-button.danger {
+  color: #a23828;
+}
+
 .spin {
   animation: spin 900ms linear infinite;
 }
@@ -625,13 +845,19 @@ h1 {
   .summary-band,
   .generator-panel,
   .queue-layout,
+  .chat-composer,
+  .settings-workspace,
+  .source-item,
   .card-footer {
     align-items: stretch;
     flex-direction: column;
   }
 
   .generator-panel,
-  .queue-layout {
+  .queue-layout,
+  .chat-composer,
+  .settings-workspace,
+  .source-item {
     display: flex;
   }
 
@@ -647,7 +873,8 @@ h1 {
   .summary-item,
   .download-button,
   .generator-submit,
-  .ghost-button {
+  .ghost-button,
+  .send-button {
     width: 100%;
   }
 }

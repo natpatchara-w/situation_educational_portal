@@ -2,7 +2,7 @@ from django.contrib import admin
 from django import forms
 
 from .audit import audit_event
-from .models import ChecklistJob, OpenAISettings, Resource
+from .models import ChatSource, ChecklistJob, OpenAISettings, Resource
 
 
 @admin.register(Resource)
@@ -63,6 +63,26 @@ class OpenAISettingsAdmin(admin.ModelAdmin):
     def save_model(self, request, obj, form, change):
         super().save_model(request, obj, form, change)
         audit_event("admin_openai_settings_saved", request=request, changed=change)
+
+
+@admin.register(ChatSource)
+class ChatSourceAdmin(admin.ModelAdmin):
+    list_display = ("title", "url", "is_active", "created_by", "updated_at")
+    list_filter = ("is_active", "created_at", "updated_at")
+    search_fields = ("title", "url")
+    readonly_fields = ("public_id", "created_at", "updated_at")
+
+    def save_model(self, request, obj, form, change):
+        if not obj.created_by_id:
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
+        audit_event(
+            "admin_chat_source_saved",
+            request=request,
+            source_id=obj.public_id,
+            source_url=obj.url,
+            changed=change,
+        )
 
 
 @admin.register(ChecklistJob)

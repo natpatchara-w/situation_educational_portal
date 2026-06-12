@@ -17,9 +17,10 @@ from django.utils import timezone
 from django.urls import reverse
 from docx import Document
 
+from . import education_chat
 from .checklist_generator import extract_docx_text, generate_checklist_payload, normalize_checklist_payload, redact_sensitive_text
 from .cleanup import delete_expired_checklist_jobs
-from .models import ChecklistJob, OpenAISettings, Resource, ThrottleRecord
+from .models import ChatSource, ChecklistJob, OpenAISettings, Resource, ThrottleRecord
 from .pdf_utils import build_simple_pdf
 from .throttling import client_ip
 from volunteer_portal.database import build_database_config, database_config_from_url
@@ -62,6 +63,34 @@ def build_readable_docx(text="Volunteer checklist", include_heading=True):
 
 def checklist_job_payload(upload):
     return {"concept_note": upload, "ai_processing_acknowledged": "true"}
+
+
+class FakeResponseHeaders:
+    def __init__(self, content_type):
+        self.content_type = content_type
+
+    def get(self, name, default=None):
+        if name.lower() == "content-type":
+            return self.content_type
+        return default
+
+    def get_content_charset(self):
+        return "utf-8"
+
+
+class FakeWebsiteResponse:
+    def __init__(self, body, content_type="text/html; charset=utf-8"):
+        self.body = body.encode("utf-8") if isinstance(body, str) else body
+        self.headers = FakeResponseHeaders(content_type)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def read(self, size=-1):
+        return self.body if size < 0 else self.body[:size]
 
 
 class DatabaseConfigTests(TestCase):
@@ -638,6 +667,419 @@ class ChecklistGeneratorApiTests(TestCase):
         self.assertFalse(ChecklistJob.objects.filter(id=expired_job.id).exists())
         self.assertFalse(Path(concept_path).exists())
         self.assertFalse(Path(pdf_path).exists())
+
+
+@override_settings(CHAT_VECTOR_SEARCH_ENABLED=False)
+class EducationChatApiTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="volunteer", password="test-password")
+        self.staff = User.objects.create_user(username="staff", password="test-password", is_staff=True)
+        OpenAISettings.objects.create(api_key="sk-test")
+        self.educational = Resource.objects.create(
+            title="Tsunami Education Guide",
+            description="School evacuation routes and safe assembly points.",
+            category=Resource.Category.EDUCATIONAL,
+            pdf_file=SimpleUploadedFile(
+                "tsunami-guide.docx",
+                build_readable_docx("During shaking, drop, cover, and hold. Move to signed evacuation routes."),
+                content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+        )
+        self.staff_only = Resource.objects.create(
+            title="Staff Education Note",
+            description="Internal contact tree.",
+            category=Resource.Category.EDUCATIONAL,
+            access_level=Resource.AccessLevel.STAFF,
+            pdf_file=SimpleUploadedFile(
+                "staff-note.docx",
+                build_readable_docx("Staff only emergency contacts."),
+                content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+        )
+
+    def test_anonymous_users_cannot_use_chat(self):
+        response = self.client.post(reverse("api-chat-reply"), data=json.dumps({"message": "What should I read?"}), content_type="application/json")
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_chat_uses_langgraph_chat_model_with_visible_educational_context(self):
+        self.client.login(username="volunteer", password="test-password")
+
+        with patch("resources.education_chat.ChatOpenAI") as chat_model:
+            chat_model.return_value.invoke.return_value = SimpleNamespace(content="Use the Tsunami Education Guide.")
+            response = self.client.post(
+                reverse("api-chat-reply"),
+                data=json.dumps({"message": "What should volunteers do during shaking?", "history": []}),
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["model"], "gpt-5.4-mini")
+        self.assertEqual(payload["provider"], "OpenAI")
+        self.assertEqual(payload["reasoningEffort"], "medium")
+        self.assertEqual(payload["reply"], "Use the Tsunami Education Guide.")
+        self.assertEqual(payload["sources"][0]["title"], "Tsunami Education Guide")
+        chat_model.assert_called_once()
+        self.assertEqual(chat_model.call_args.kwargs["model"], "gpt-5.4-mini")
+        self.assertEqual(chat_model.call_args.kwargs["reasoning"], {"effort": "medium"})
+        system_message = chat_model.return_value.invoke.call_args.args[0][0].content
+        self.assertIn("Tsunami Education Guide", system_message)
+        self.assertNotIn("Staff Education Note", system_message)
+
+    @override_settings(CHAT_MAX_GROUNDING_SOURCES=10, CHAT_MAX_LINKED_SOURCES_PER_WEBSITE=2)
+    def test_chat_searches_linked_pages_and_documents_from_website_source(self):
+        ChatSource.objects.create(title="GMLS Education", url="https://example.org/education", created_by=self.staff)
+        nav_links = "".join(f'<a href="/nav/{index}">Navigation {index}</a>' for index in range(12))
+        responses = {
+            "https://example.org/education": FakeWebsiteResponse(
+                f"""
+                <html>
+                  <head><title>Education Home</title></head>
+                  <body>
+                    {nav_links}
+                    <a href="/guides/tsunami">Tsunami linked guide</a>
+                    <a href="/files/field-kit.docx">Field kit</a>
+                  </body>
+                </html>
+                """
+            ),
+            "https://example.org/guides/tsunami": FakeWebsiteResponse(
+                """
+                <html>
+                  <head><title>Tsunami Linked Guide</title></head>
+                  <body>Linked guide says volunteers should move inland after official evacuation direction.</body>
+                </html>
+                """
+            ),
+            "https://example.org/files/field-kit.docx": FakeWebsiteResponse(
+                build_readable_docx("Field kits include whistles, printed maps, and a charged phone."),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+        }
+
+        def open_website(request, timeout=None):
+            return responses[request.full_url]
+
+        self.client.login(username="volunteer", password="test-password")
+        with patch("resources.education_chat.URL_OPENER.open", side_effect=open_website):
+            with patch("resources.education_chat.ChatOpenAI") as chat_model:
+                chat_model.return_value.invoke.return_value = SimpleNamespace(content="Use the linked website sources.")
+                response = self.client.post(
+                    reverse("api-chat-reply"),
+                    data=json.dumps({"message": "What do linked sources say about evacuation and field kits?"}),
+                    content_type="application/json",
+                )
+
+        self.assertEqual(response.status_code, 200)
+        system_message = chat_model.return_value.invoke.call_args.args[0][0].content
+        self.assertIn("Linked guide says volunteers should move inland", system_message)
+        self.assertIn("Field kits include whistles", system_message)
+        source_titles = {source["title"] for source in response.json()["sources"]}
+        self.assertIn("GMLS Education: Tsunami Linked Guide", source_titles)
+        self.assertIn("GMLS Education: field-kit.docx", source_titles)
+
+    @override_settings(CHAT_MAX_GROUNDING_SOURCES=5, CHAT_SOURCE_SNIPPET_CHARS=700)
+    def test_chat_uses_listed_webpage_content_after_navigation_for_generic_questions(self):
+        ChatSource.objects.create(title="BMKG Education", url="https://example.org/education", created_by=self.staff)
+        page_text = " ".join(f"Navigation item {index}" for index in range(120))
+        responses = {
+            "https://example.org/education": FakeWebsiteResponse(
+                f"""
+                <html>
+                  <head><title>Edukasi Gempa Bumi dan Tsunami</title></head>
+                  <body>
+                    <nav>{page_text}</nav>
+                    <main>
+                      <h1>Buku</h1>
+                      <article>
+                        <h2>Buku Saku Gempabumi dan Tsunami</h2>
+                        <p>Panduan edukatif mengenai penyebab, dampak, dan langkah mitigasi sebelum, saat,
+                        dan setelah bencana terjadi.</p>
+                      </article>
+                      <article>
+                        <h2>Petunjuk Keselamatan Gempabumi dan Tsunami Bagi Penyandang Disabilitas Netra</h2>
+                        <p>Panduan evakuasi, titik kumpul ramah disabilitas, dan pertolongan pertama.</p>
+                      </article>
+                    </main>
+                  </body>
+                </html>
+                """
+            ),
+        }
+
+        def open_website(request, timeout=None):
+            return responses[request.full_url]
+
+        self.client.login(username="volunteer", password="test-password")
+        with patch("resources.education_chat.URL_OPENER.open", side_effect=open_website):
+            with patch("resources.education_chat.ChatOpenAI") as chat_model:
+                chat_model.return_value.invoke.return_value = SimpleNamespace(content="The page lists tsunami education books.")
+                response = self.client.post(
+                    reverse("api-chat-reply"),
+                    data=json.dumps({"message": "What content is listed on this webpage?"}),
+                    content_type="application/json",
+                )
+
+        self.assertEqual(response.status_code, 200)
+        system_message = chat_model.return_value.invoke.call_args.args[0][0].content
+        self.assertIn("Buku Saku Gempabumi dan Tsunami", system_message)
+        self.assertIn("Petunjuk Keselamatan Gempabumi", system_message)
+
+    def test_chat_answers_basic_earthquake_question_from_portal_glossary(self):
+        self.client.login(username="volunteer", password="test-password")
+
+        with patch("resources.education_chat.ChatOpenAI") as chat_model:
+            chat_model.return_value.invoke.return_value = SimpleNamespace(
+                content="An earthquake is ground shaking caused by sudden energy release inside the Earth."
+            )
+            response = self.client.post(
+                reverse("api-chat-reply"),
+                data=json.dumps({"message": "What is earthquake?"}),
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        system_message = chat_model.return_value.invoke.call_args.args[0][0].content
+        self.assertIn("Volunteer education glossary: Earthquake", system_message)
+        self.assertIn("Earthquake (gempa bumi/gempabumi) is ground shaking", system_message)
+        source_titles = [source["title"] for source in response.json()["sources"]]
+        self.assertIn("Volunteer education glossary: Earthquake", source_titles)
+
+    def test_chat_corrects_misspelled_earthquake_question_from_portal_glossary(self):
+        self.client.login(username="volunteer", password="test-password")
+
+        with patch("resources.education_chat.ChatOpenAI") as chat_model:
+            chat_model.return_value.invoke.return_value = SimpleNamespace(
+                content="An earthquake is ground shaking caused by sudden energy release inside the Earth."
+            )
+            response = self.client.post(
+                reverse("api-chat-reply"),
+                data=json.dumps({"message": "waht is earthqauke"}),
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        system_message = chat_model.return_value.invoke.call_args.args[0][0].content
+        self.assertIn("Volunteer education glossary: Earthquake", system_message)
+        self.assertIn("Earthquake (gempa bumi/gempabumi) is ground shaking", system_message)
+        self.assertIn("gempa bumi", education_chat._query_terms("waht is earthqauke"))
+        source_titles = [source["title"] for source in response.json()["sources"]]
+        self.assertIn("Volunteer education glossary: Earthquake", source_titles)
+
+    @override_settings(CHAT_MAX_GROUNDING_SOURCES=8, CHAT_MAX_LINKED_SOURCES_PER_WEBSITE=1)
+    def test_chat_expands_english_earthquake_query_to_indonesian_linked_sources(self):
+        ChatSource.objects.create(title="BMKG Education", url="https://example.org/education", created_by=self.staff)
+        nav_links = "".join(f'<a href="/nav/{index}">Navigation {index}</a>' for index in range(12))
+        responses = {
+            "https://example.org/education": FakeWebsiteResponse(
+                f"""
+                <html>
+                  <head><title>Edukasi Bencana</title></head>
+                  <body>
+                    {nav_links}
+                    <a href="/mitigasi/antisipasi-gempabumi">Antisipasi Gempabumi</a>
+                  </body>
+                </html>
+                """
+            ),
+            "https://example.org/mitigasi/antisipasi-gempabumi": FakeWebsiteResponse(
+                """
+                <html>
+                  <head><title>Antisipasi Gempabumi</title></head>
+                  <body>Gempa bumi adalah getaran tanah akibat pelepasan energi secara tiba-tiba.</body>
+                </html>
+                """
+            ),
+        }
+
+        def open_website(request, timeout=None):
+            return responses[request.full_url]
+
+        self.client.login(username="volunteer", password="test-password")
+        with patch("resources.education_chat.URL_OPENER.open", side_effect=open_website):
+            with patch("resources.education_chat.ChatOpenAI") as chat_model:
+                chat_model.return_value.invoke.return_value = SimpleNamespace(content="Gempa bumi means earthquake.")
+                response = self.client.post(
+                    reverse("api-chat-reply"),
+                    data=json.dumps({"message": "What is earthquake?"}),
+                    content_type="application/json",
+                )
+
+        self.assertEqual(response.status_code, 200)
+        system_message = chat_model.return_value.invoke.call_args.args[0][0].content
+        self.assertIn("Gempa bumi adalah getaran tanah", system_message)
+        source_titles = {source["title"] for source in response.json()["sources"]}
+        self.assertIn("BMKG Education: Antisipasi Gempabumi", source_titles)
+
+    def test_chat_uses_gpt_even_when_no_sources_are_available(self):
+        Resource.objects.all().delete()
+        self.client.login(username="volunteer", password="test-password")
+
+        with patch("resources.education_chat.ChatOpenAI") as chat_model:
+            chat_model.return_value.invoke.return_value = SimpleNamespace(
+                content="No approved source material was found for that question."
+            )
+            response = self.client.post(
+                reverse("api-chat-reply"),
+                data=json.dumps({"message": "What is the training schedule?"}),
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["reply"], "No approved source material was found for that question.")
+        self.assertEqual(response.json()["sources"], [])
+        chat_model.assert_called_once()
+        system_message = chat_model.return_value.invoke.call_args.args[0][0].content
+        self.assertIn("No approved portal educational files", system_message)
+
+    def test_chat_provider_errors_are_returned_as_setup_errors(self):
+        self.client.login(username="volunteer", password="test-password")
+
+        with patch("resources.education_chat.ChatOpenAI") as chat_model:
+            chat_model.return_value.invoke.side_effect = RuntimeError("model unavailable")
+            response = self.client.post(
+                reverse("api-chat-reply"),
+                data=json.dumps({"message": "What should volunteers do during shaking?"}),
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("GPT request failed for gpt-5.4-mini", response.json()["detail"])
+
+    def test_chat_requires_openai_key_when_sources_exist(self):
+        OpenAISettings.objects.update(api_key="")
+        self.client.login(username="volunteer", password="test-password")
+
+        response = self.client.post(
+            reverse("api-chat-reply"),
+            data=json.dumps({"message": "What should volunteers do during shaking?"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("OpenAI API key", response.json()["detail"])
+
+    def test_staff_can_manage_chat_website_sources(self):
+        self.client.login(username="staff", password="test-password")
+
+        create_response = self.client.post(
+            reverse("api-chat-source-create"),
+            data=json.dumps({"title": "GMLS Education", "url": "https://example.org/education"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(create_response.status_code, 201)
+        source_id = create_response.json()["source"]["id"]
+        self.assertTrue(ChatSource.objects.filter(title="GMLS Education").exists())
+
+        list_response = self.client.get(reverse("api-chat-source-list"))
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(len(list_response.json()["sources"]), 1)
+
+        update_response = self.client.post(
+            reverse("api-chat-source-update", args=[source_id]),
+            data=json.dumps({"isActive": False}),
+            content_type="application/json",
+        )
+        self.assertEqual(update_response.status_code, 200)
+        self.assertFalse(ChatSource.objects.get(public_id=source_id).is_active)
+
+        delete_response = self.client.post(reverse("api-chat-source-delete", args=[source_id]))
+        self.assertEqual(delete_response.status_code, 200)
+        self.assertFalse(ChatSource.objects.exists())
+
+    def test_non_staff_cannot_manage_chat_website_sources(self):
+        self.client.login(username="volunteer", password="test-password")
+
+        response = self.client.get(reverse("api-chat-source-list"))
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_chat_website_source_rejects_private_urls(self):
+        self.client.login(username="staff", password="test-password")
+
+        response = self.client.post(
+            reverse("api-chat-source-create"),
+            data=json.dumps({"url": "http://127.0.0.1/internal"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("public", response.json()["detail"])
+
+
+class EducationChatHybridRetrievalTests(TestCase):
+    @override_settings(CHAT_VECTOR_SEARCH_ENABLED=True, CHAT_VECTOR_MAX_CANDIDATES=10, OPENAI_EMBEDDING_MODEL="text-embedding-3-small")
+    def test_vector_source_ranks_use_langchain_vector_store(self):
+        sources = [
+            education_chat.GroundingSource(
+                title="String earthquake source",
+                kind="Approved website",
+                locator="https://example.org/string",
+                snippet="Earthquake preparedness checklist.",
+                score=20,
+            ),
+            education_chat.GroundingSource(
+                title="Semantic gempabumi source",
+                kind="Linked website source",
+                locator="https://example.org/gempabumi",
+                snippet="Gempa bumi adalah getaran tanah akibat pelepasan energi secara tiba-tiba.",
+                score=3,
+            ),
+        ]
+        captured = {}
+
+        class FakeVectorStore:
+            def __init__(self, documents):
+                self.documents = documents
+
+            @classmethod
+            def from_documents(cls, documents, embedding):
+                captured["documents"] = documents
+                captured["embedding"] = embedding
+                return cls(documents)
+
+            def similarity_search_with_score(self, question, k):
+                captured["question"] = question
+                captured["k"] = k
+                return [(self.documents[1], 0.95), (self.documents[0], 0.25)]
+
+        with patch("resources.education_chat.OpenAIEmbeddings") as embeddings:
+            embeddings.return_value = object()
+            with patch("resources.education_chat.InMemoryVectorStore", FakeVectorStore):
+                ranks = education_chat._vector_source_ranks(sources, "What is earthquake?", "sk-real")
+
+        embeddings.assert_called_once_with(model="text-embedding-3-small", api_key="sk-real", timeout=60)
+        self.assertEqual(captured["question"], "What is earthquake?")
+        self.assertEqual(captured["k"], 2)
+        self.assertIn("Semantic gempabumi source", captured["documents"][1].page_content)
+        self.assertEqual(ranks, {1: 1, 0: 2})
+
+    @override_settings(CHAT_HYBRID_STRING_WEIGHT=1, CHAT_HYBRID_VECTOR_WEIGHT=100, CHAT_HYBRID_RRF_K=1)
+    def test_hybrid_rank_sources_merges_vector_and_string_rankings(self):
+        sources = [
+            education_chat.GroundingSource(
+                title="Exact string match",
+                kind="Approved website",
+                locator="https://example.org/string",
+                snippet="The word earthquake appears here, but this chunk is only a navigation item.",
+                score=100,
+            ),
+            education_chat.GroundingSource(
+                title="Semantic bilingual match",
+                kind="Linked website source",
+                locator="https://example.org/gempabumi",
+                snippet="Gempa bumi adalah getaran tanah akibat pelepasan energi secara tiba-tiba.",
+                score=1,
+            ),
+        ]
+
+        with patch("resources.education_chat._vector_source_ranks", return_value={1: 1, 0: 2}):
+            ranked = education_chat._hybrid_rank_sources(sources, "What is earthquake?", "sk-real")
+
+        self.assertEqual(ranked[0].title, "Semantic bilingual match")
+        self.assertGreater(ranked[0].score, ranked[1].score)
 
 
 class ThrottleTests(TestCase):
