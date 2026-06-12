@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   BookOpen,
   Download,
@@ -26,6 +28,7 @@ const API_BASE = (
   configuredApiBase || (import.meta.env.DEV ? `http://${window.location.hostname}:8000` : window.location.origin)
 ).replace(/\/$/, "");
 
+const ORGANIZATION_LOGO_SRC = "/brand/logo-umn-emblem.png";
 const LANGUAGE_STORAGE_KEY = "volunteerPortalLanguage";
 let csrfToken = "";
 let authToken = window.localStorage.getItem("volunteerAuthToken") || "";
@@ -429,9 +432,12 @@ function App() {
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div>
-          <p className="eyebrow">{t("appEyebrow")}</p>
-          <h1>{t(PAGE_TITLES[activePage] || PAGE_TITLES.library)}</h1>
+        <div className="brand-heading">
+          <BrandMark compact />
+          <div>
+            <p className="eyebrow">{t("appEyebrow")}</p>
+            <h1>{t(PAGE_TITLES[activePage] || PAGE_TITLES.library)}</h1>
+          </div>
         </div>
         <div className="topbar-actions">
           <LanguageToggle language={language} onChange={setLanguage} t={t} />
@@ -674,7 +680,7 @@ function EducationChat({ language, t }) {
                   {message.provider || "OpenAI"} {message.model} - {message.reasoningEffort} {t("reasoning")}
                 </small>
               )}
-              <p>{message.content}</p>
+              <MarkdownMessage content={message.content} />
               {message.sources?.length > 0 && <ChatSources sources={message.sources} t={t} />}
             </div>
           </article>
@@ -703,6 +709,32 @@ function EducationChat({ language, t }) {
         </button>
       </form>
     </section>
+  );
+}
+
+function MarkdownMessage({ content }) {
+  return (
+    <div className="markdown-content">
+      <ReactMarkdown components={{ a: MarkdownLink }} remarkPlugins={[remarkGfm]}>
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
+function MarkdownLink({ node: _node, href = "", children, ...props }) {
+  const targetHref = href.trim();
+  const isExternal = /^https?:\/\//i.test(targetHref);
+  const isInternal = targetHref.startsWith("/");
+
+  if (!isExternal && !isInternal) {
+    return <span>{children}</span>;
+  }
+
+  return (
+    <a {...props} href={targetHref} rel={isExternal ? "noreferrer" : undefined} target={isExternal ? "_blank" : undefined}>
+      {children}
+    </a>
   );
 }
 
@@ -1248,9 +1280,12 @@ function LoginScreen({ language, onLanguageChange, onLogin, t }) {
     <main className="login-page">
       <section className="login-panel">
         <div className="login-header">
-          <div>
-            <p className="eyebrow">{t("loginEyebrow")}</p>
-            <h1>{t("signInHeading")}</h1>
+          <div className="login-title">
+            <BrandMark />
+            <div>
+              <p className="eyebrow">{t("loginEyebrow")}</p>
+              <h1>{t("signInHeading")}</h1>
+            </div>
           </div>
           <LanguageToggle language={language} onChange={onLanguageChange} t={t} />
         </div>
@@ -1275,6 +1310,14 @@ function LoginScreen({ language, onLanguageChange, onLogin, t }) {
         </form>
       </section>
     </main>
+  );
+}
+
+function BrandMark({ compact = false }) {
+  return (
+    <span className={`brand-mark${compact ? " compact" : ""}`}>
+      <img src={ORGANIZATION_LOGO_SRC} alt="UMN Universitas Multimedia Nusantara" />
+    </span>
   );
 }
 
