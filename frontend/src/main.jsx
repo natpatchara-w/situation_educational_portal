@@ -16,12 +16,18 @@ import {
 } from "lucide-react";
 import "./styles.css";
 
-const API_BASE = `http://${window.location.hostname}:8000`;
+const API_BASE = getApiBase();
 const CATEGORIES = [
   { value: "", label: "All files" },
   { value: "checklist", label: "Volunteer Checklists" },
   { value: "educational", label: "Educational Resources" },
 ];
+
+function getApiBase() {
+  const configuredBase =
+    import.meta.env.VITE_API_BASE || window.__VOLUNTEER_API_BASE__ || `http://${window.location.hostname}:8000`;
+  return configuredBase.replace(/\/$/, "");
+}
 
 function getCookie(name) {
   return document.cookie

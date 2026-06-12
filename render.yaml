@@ -1,0 +1,52 @@
+previews:
+  generation: manual
+
+services:
+  - type: web
+    runtime: python
+    name: datakind-gmls-backend
+    rootDir: backend
+    region: singapore
+    plan: free
+    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
+    startCommand: python manage.py migrate --noinput && gunicorn volunteer_portal.wsgi:application
+    healthCheckPath: /api/auth/csrf/
+    autoDeployTrigger: commit
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DJANGO_DEBUG
+        value: "False"
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: datakind-gmls-db
+          property: connectionString
+      - key: FRONTEND_ORIGINS
+        value: https://datakind-gmls-frontend.onrender.com
+
+  - type: web
+    runtime: static
+    name: datakind-gmls-frontend
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    autoDeployTrigger: commit
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: NODE_VERSION
+        value: 22.12.0
+      - key: VITE_API_BASE
+        value: https://datakind-gmls-backend.onrender.com
+
+databases:
+  - name: datakind-gmls-db
+    region: singapore
+    plan: free
+    databaseName: datakind_gmls
+    user: datakind_gmls
+    postgresMajorVersion: "17"
