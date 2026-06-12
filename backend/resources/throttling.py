@@ -1,5 +1,6 @@
 import hashlib
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -12,7 +13,13 @@ def throttle_key(*parts):
 
 
 def client_ip(request):
-    return request.META.get("REMOTE_ADDR", "")
+    remote_addr = request.META.get("REMOTE_ADDR", "")
+    if remote_addr in getattr(settings, "TRUSTED_PROXY_IPS", []):
+        header_name = getattr(settings, "CLIENT_IP_HEADER", "HTTP_X_FORWARDED_FOR")
+        forwarded_for = request.META.get(header_name, "")
+        if forwarded_for:
+            return forwarded_for.split(",", 1)[0].strip()
+    return remote_addr
 
 
 def is_throttled(scope, key_hash, limit, window_seconds):

@@ -8,7 +8,7 @@ from django.db import models
 
 from .fields import EncryptedTextField
 from .storage import PrivateMediaStorage
-from .upload_validation import validate_docx_archive, validate_file_size
+from .upload_validation import scan_uploaded_file, validate_docx_archive, validate_file_size
 
 
 def validate_resource_file(uploaded_file):
@@ -25,6 +25,7 @@ def validate_resource_file(uploaded_file):
             validate_docx_archive(uploaded_file)
         else:
             raise ValidationError("Upload a PDF or DOCX file.")
+        scan_uploaded_file(uploaded_file, "Resource file")
     finally:
         uploaded_file.seek(position)
 
@@ -34,10 +35,16 @@ class Resource(models.Model):
         CHECKLIST = "checklist", "Volunteer Checklist"
         EDUCATIONAL = "educational", "Educational Resource"
 
+    class AccessLevel(models.TextChoices):
+        AUTHENTICATED = "authenticated", "All authenticated users"
+        CHECKLIST_GENERATORS = "checklist_generators", "Checklist generators"
+        STAFF = "staff", "Staff only"
+
     public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     title = models.CharField(max_length=180)
     description = models.TextField(blank=True)
     category = models.CharField(max_length=20, choices=Category.choices)
+    access_level = models.CharField(max_length=24, choices=AccessLevel.choices, default=AccessLevel.AUTHENTICATED)
     pdf_file = models.FileField(
         "resource file",
         storage=PrivateMediaStorage(),

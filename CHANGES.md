@@ -1,5 +1,30 @@
 # Changes
 
+## Revised security report remediation
+
+- Added environment-driven database configuration through `DJANGO_DATABASE_URL` or `DATABASE_URL`, with local SQLite defaults and production fail-closed behavior unless an explicit override allows SQLite.
+- Added PostgreSQL driver support through `psycopg[binary]` and refreshed `uv.lock`.
+- Tightened production guards for `DJANGO_ENV=production`, debug mode, secure cookies, frontend origins, and authenticated/non-local Celery broker configuration.
+- Added proxy-aware client IP handling through `DJANGO_TRUSTED_PROXY_IPS` and `DJANGO_CLIENT_IP_HEADER`.
+- Added per-resource access levels for all authenticated users, checklist generators, and staff-only resources, enforced in list and download endpoints.
+- Added AI checklist generation disablement and required user acknowledgement before concept notes are sent for AI processing.
+- Added configurable prompt-size bounds, upload malware-scanning hooks, search length validation, Celery beat cleanup scheduling, and structured security audit logs.
+- Added static frontend security header artifacts for common static hosts.
+- Added CI security automation covering tests, migration drift, Django deploy checks, Python dependency audit, frontend build, and npm audit.
+- Updated `CONFIGURE.md` with the new database, broker, proxy, scanning, AI, cleanup, and CI configuration requirements.
+
+Verification:
+
+- `uv lock`
+- `uv run python backend/manage.py test resources`
+- `uv run python backend/manage.py makemigrations --check --dry-run`
+- `uv run python backend/manage.py check`
+- production-like `uv run python backend/manage.py check --deploy`
+- `uv export --format requirements-txt --no-hashes --output-file /tmp/datakind-requirements-audit.txt`
+- `uv tool run pip-audit -r /tmp/datakind-requirements-audit.txt`
+- `npm run build`
+- `npm audit --json`
+
 ## SEC-12: Backend dependency locking
 
 - Added `pyproject.toml` and `uv.lock` as the authoritative Python dependency workflow.

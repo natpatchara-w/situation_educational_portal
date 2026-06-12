@@ -1,3 +1,6 @@
+import shlex
+import subprocess
+import tempfile
 from zipfile import BadZipFile, ZipFile
 
 from django.conf import settings
@@ -18,6 +21,36 @@ def uploaded_file_size(uploaded_file):
 def validate_file_size(uploaded_file, max_bytes, label):
     if uploaded_file_size(uploaded_file) > max_bytes:
         raise ValidationError(f"{label} must be {max_bytes // (1024 * 1024)} MB or smaller.")
+
+
+def scan_uploaded_file(uploaded_file, label):
+    command = getattr(settings, "UPLOAD_SCAN_COMMAND", "")
+    if not command:
+        if getattr(settings, "UPLOAD_SCANNING_REQUIRED", False):
+            raise ValidationError(f"{label} could not be accepted because upload scanning is not configured.")
+        return
+
+    position = uploaded_file.tell()
+    uploaded_file.seek(0)
+    try:
+        with tempfile.NamedTemporaryFile(prefix="upload-scan-", suffix=".bin") as temporary_file:
+            for chunk in iter(lambda: uploaded_file.read(1024 * 1024), b""):
+                temporary_file.write(chunk)
+            temporary_file.flush()
+            result = subprocess.run(
+                [*shlex.split(command), temporary_file.name],
+                capture_output=True,
+                check=False,
+                text=True,
+                timeout=getattr(settings, "UPLOAD_SCAN_TIMEOUT_SECONDS", 30),
+            )
+    except subprocess.TimeoutExpired as exc:
+        raise ValidationError(f"{label} scan timed out.") from exc
+    finally:
+        uploaded_file.seek(position)
+
+    if result.returncode != 0:
+        raise ValidationError(f"{label} failed security scanning.")
 
 
 def validate_docx_archive(uploaded_file):

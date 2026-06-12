@@ -8,7 +8,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 from django.contrib.auth.models import User
 from django.contrib.auth.models import Permission
-from django.core.exceptions import ValidationError
+from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
@@ -21,6 +21,8 @@ from .checklist_generator import extract_docx_text, generate_checklist_payload, 
 from .cleanup import delete_expired_checklist_jobs
 from .models import ChecklistJob, OpenAISettings, Resource, ThrottleRecord
 from .pdf_utils import build_simple_pdf
+from .throttling import client_ip
+from volunteer_portal.database import build_database_config, database_config_from_url
 
 
 def build_simple_docx():
@@ -58,6 +60,45 @@ def build_readable_docx(text="Volunteer checklist", include_heading=True):
     return buffer.getvalue()
 
 
+def checklist_job_payload(upload):
+    return {"concept_note": upload, "ai_processing_acknowledged": "true"}
+
+
+class DatabaseConfigTests(TestCase):
+    def test_local_database_defaults_to_sqlite(self):
+        config = build_database_config({}, Path("/tmp/app/backend"), is_production=False)
+
+        self.assertEqual(config["ENGINE"], "django.db.backends.sqlite3")
+        self.assertEqual(config["NAME"], Path("/tmp/app/backend") / "db.sqlite3")
+
+    def test_production_requires_database_url(self):
+        with self.assertRaises(ImproperlyConfigured):
+            build_database_config({}, Path("/tmp/app/backend"), is_production=True)
+
+    def test_postgres_database_url_is_supported(self):
+        config = build_database_config(
+            {
+                "DJANGO_DATABASE_URL": "postgres://portal:secret@db.example.org:5432/volunteers?sslmode=verify-full",
+            },
+            Path("/tmp/app/backend"),
+            is_production=True,
+        )
+
+        self.assertEqual(config["ENGINE"], "django.db.backends.postgresql")
+        self.assertEqual(config["NAME"], "volunteers")
+        self.assertEqual(config["USER"], "portal")
+        self.assertEqual(config["PASSWORD"], "secret")
+        self.assertEqual(config["HOST"], "db.example.org")
+        self.assertEqual(config["PORT"], "5432")
+        self.assertEqual(config["OPTIONS"]["sslmode"], "verify-full")
+
+    def test_sqlite_url_can_be_used_locally(self):
+        config = database_config_from_url("sqlite:///custom.sqlite3", Path("/tmp/app/backend"))
+
+        self.assertEqual(config["ENGINE"], "django.db.backends.sqlite3")
+        self.assertEqual(config["NAME"], Path("/tmp/app/backend/custom.sqlite3"))
+
+
 class ResourceApiTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="volunteer", password="test-password")
@@ -72,6 +113,18 @@ class ResourceApiTests(TestCase):
             description="Learning material for students",
             category=Resource.Category.EDUCATIONAL,
             pdf_file=SimpleUploadedFile("guide.pdf", build_simple_pdf("Guide", "Test PDF"), content_type="application/pdf"),
+        )
+        self.generator_only = Resource.objects.create(
+            title="Generator Handbook",
+            category=Resource.Category.EDUCATIONAL,
+            access_level=Resource.AccessLevel.CHECKLIST_GENERATORS,
+            pdf_file=SimpleUploadedFile("generator.pdf", build_simple_pdf("Generator", "Test PDF"), content_type="application/pdf"),
+        )
+        self.staff_only = Resource.objects.create(
+            title="Staff Operations Note",
+            category=Resource.Category.EDUCATIONAL,
+            access_level=Resource.AccessLevel.STAFF,
+            pdf_file=SimpleUploadedFile("staff.pdf", build_simple_pdf("Staff", "Test PDF"), content_type="application/pdf"),
         )
         Resource.objects.create(
             title="Hidden Draft",
@@ -94,6 +147,29 @@ class ResourceApiTests(TestCase):
         payload = response.json()
         self.assertEqual(len(payload["resources"]), 2)
         uuid.UUID(payload["resources"][0]["id"])
+
+    def test_generator_permission_can_list_generator_resources(self):
+        self.user.user_permissions.add(Permission.objects.get(codename="can_generate_checklist"))
+        self.client.login(username="volunteer", password="test-password")
+
+        response = self.client.get(reverse("api-resource-list"))
+
+        self.assertEqual(response.status_code, 200)
+        titles = {resource["title"] for resource in response.json()["resources"]}
+        self.assertIn("Generator Handbook", titles)
+        self.assertNotIn("Staff Operations Note", titles)
+
+    def test_staff_can_list_staff_resources(self):
+        self.user.is_staff = True
+        self.user.save()
+        self.client.login(username="volunteer", password="test-password")
+
+        response = self.client.get(reverse("api-resource-list"))
+
+        self.assertEqual(response.status_code, 200)
+        titles = {resource["title"] for resource in response.json()["resources"]}
+        self.assertIn("Generator Handbook", titles)
+        self.assertIn("Staff Operations Note", titles)
 
     def test_cors_allows_configured_frontend_origin(self):
         response = self.client.options(reverse("api-resource-list"), HTTP_ORIGIN="http://localhost:5173")
@@ -132,6 +208,14 @@ class ResourceApiTests(TestCase):
         self.assertEqual(len(resources), 1)
         self.assertEqual(resources[0]["title"], "Tsunami Education Guide")
 
+    @override_settings(RESOURCE_SEARCH_MAX_LENGTH=6)
+    def test_search_rejects_excessive_length(self):
+        self.client.login(username="volunteer", password="test-password")
+
+        response = self.client.get(reverse("api-resource-list"), {"search": "tsunami"})
+
+        self.assertEqual(response.status_code, 400)
+
     def test_download_serves_active_pdf(self):
         self.client.login(username="volunteer", password="test-password")
 
@@ -140,6 +224,15 @@ class ResourceApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Type"], "application/pdf")
         self.assertIn("attachment", response["Content-Disposition"])
+
+    def test_resource_download_emits_security_audit_log(self):
+        self.client.login(username="volunteer", password="test-password")
+
+        with self.assertLogs("resources.security", level="INFO") as logs:
+            response = self.client.get(reverse("api-resource-download", args=[self.checklist.public_id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("event=resource_download", logs.output[0])
 
     def test_download_serves_active_docx(self):
         docx = Resource.objects.create(
@@ -168,6 +261,13 @@ class ResourceApiTests(TestCase):
         self.client.login(username="volunteer", password="test-password")
 
         response = self.client.get(reverse("api-resource-download", args=[uuid.uuid4()]))
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_download_rejects_resource_outside_user_access_level(self):
+        self.client.login(username="volunteer", password="test-password")
+
+        response = self.client.get(reverse("api-resource-download", args=[self.staff_only.public_id]))
 
         self.assertEqual(response.status_code, 404)
 
@@ -202,6 +302,17 @@ class ResourceApiTests(TestCase):
         with self.assertRaises(ValidationError):
             resource.full_clean()
 
+    @override_settings(UPLOAD_SCANNING_REQUIRED=True, UPLOAD_SCAN_COMMAND="")
+    def test_resource_upload_requires_scanner_when_configured(self):
+        resource = Resource(
+            title="Needs Scan",
+            category=Resource.Category.CHECKLIST,
+            pdf_file=SimpleUploadedFile("scan.pdf", build_simple_pdf("Scan", "Test PDF"), content_type="application/pdf"),
+        )
+
+        with self.assertRaises(ValidationError):
+            resource.full_clean()
+
 
 class ChecklistGeneratorApiTests(TestCase):
     def setUp(self):
@@ -220,9 +331,36 @@ class ChecklistGeneratorApiTests(TestCase):
             content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
 
-        response = self.client.post(reverse("api-checklist-job-create"), {"concept_note": upload})
+        response = self.client.post(reverse("api-checklist-job-create"), checklist_job_payload(upload))
 
         self.assertEqual(response.status_code, 403)
+
+    @override_settings(AI_CHECKLIST_GENERATION_ENABLED=False)
+    def test_checklist_job_create_respects_ai_disable_flag(self):
+        self.client.login(username="volunteer", password="test-password")
+        self.user.user_permissions.add(Permission.objects.get(codename="can_generate_checklist"))
+        upload = SimpleUploadedFile(
+            "concept-note.docx",
+            build_readable_docx("Marimba workshop for village students."),
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+
+        response = self.client.post(reverse("api-checklist-job-create"), checklist_job_payload(upload))
+
+        self.assertEqual(response.status_code, 503)
+
+    def test_checklist_job_create_requires_ai_acknowledgement(self):
+        self.client.login(username="volunteer", password="test-password")
+        self.user.user_permissions.add(Permission.objects.get(codename="can_generate_checklist"))
+        upload = SimpleUploadedFile(
+            "concept-note.docx",
+            build_readable_docx("Marimba workshop for village students."),
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+
+        response = self.client.post(reverse("api-checklist-job-create"), {"concept_note": upload})
+
+        self.assertEqual(response.status_code, 400)
 
     @override_settings(CHECKLIST_JOB_THROTTLE_LIMIT=1)
     def test_checklist_job_create_is_throttled(self):
@@ -237,7 +375,7 @@ class ChecklistGeneratorApiTests(TestCase):
                 content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             )
             with patch("resources.tasks.generate_checklist_job.delay"):
-                response = self.client.post(reverse("api-checklist-job-create"), {"concept_note": upload})
+                response = self.client.post(reverse("api-checklist-job-create"), checklist_job_payload(upload))
 
         self.assertEqual(response.status_code, 429)
 
@@ -296,6 +434,24 @@ class ChecklistGeneratorApiTests(TestCase):
         self.assertNotIn("sk_secretvalue12345", user_prompt)
         self.assertIn("[redacted-email]", user_prompt)
 
+    @override_settings(CHECKLIST_MAX_CONCEPT_NOTE_CHARS=20)
+    def test_generate_checklist_bounds_prompt_size(self):
+        output_text = json.dumps(
+            {
+                "event_title": "Safe Workshop",
+                "source_note": "Generated.",
+                "sections": [{"title": "Quick checklist", "items": ["Bring water."]}],
+            }
+        )
+
+        with patch("resources.checklist_generator.OpenAI") as openai:
+            openai.return_value.responses.create.return_value = SimpleNamespace(output_text=output_text)
+            generate_checklist_payload("A" * 50, "sk-test")
+
+        user_prompt = openai.return_value.responses.create.call_args.kwargs["input"][1]["content"]
+        self.assertIn("A" * 20, user_prompt)
+        self.assertNotIn("A" * 21, user_prompt)
+
     def test_generate_checklist_endpoint_requires_queue_endpoint(self):
         self.client.login(username="volunteer", password="test-password")
         self.user.user_permissions.add(Permission.objects.get(codename="can_generate_checklist"))
@@ -326,7 +482,7 @@ class ChecklistGeneratorApiTests(TestCase):
         )
 
         with self.settings(CELERY_TASK_ALWAYS_EAGER=True):
-            response = self.client.post(reverse("api-checklist-job-create"), {"concept_note": upload})
+            response = self.client.post(reverse("api-checklist-job-create"), checklist_job_payload(upload))
 
         self.assertEqual(response.status_code, 202)
         job = ChecklistJob.objects.get()
@@ -344,7 +500,7 @@ class ChecklistGeneratorApiTests(TestCase):
         )
 
         with self.settings(CELERY_TASK_ALWAYS_EAGER=True):
-            response = self.client.post(reverse("api-checklist-job-create"), {"concept_note": upload})
+            response = self.client.post(reverse("api-checklist-job-create"), checklist_job_payload(upload))
 
         self.assertEqual(response.status_code, 202)
         job = ChecklistJob.objects.get()
@@ -362,7 +518,7 @@ class ChecklistGeneratorApiTests(TestCase):
         )
 
         with self.settings(CELERY_TASK_ALWAYS_EAGER=True):
-            response = self.client.post(reverse("api-checklist-job-create"), {"concept_note": upload})
+            response = self.client.post(reverse("api-checklist-job-create"), checklist_job_payload(upload))
 
         self.assertEqual(response.status_code, 202)
         job = ChecklistJob.objects.get()
@@ -379,7 +535,7 @@ class ChecklistGeneratorApiTests(TestCase):
         )
 
         with self.settings(CELERY_TASK_ALWAYS_EAGER=True):
-            response = self.client.post(reverse("api-checklist-job-create"), {"concept_note": upload})
+            response = self.client.post(reverse("api-checklist-job-create"), checklist_job_payload(upload))
 
         self.assertEqual(response.status_code, 202)
         job = ChecklistJob.objects.get()
@@ -396,7 +552,7 @@ class ChecklistGeneratorApiTests(TestCase):
         )
 
         with self.settings(CELERY_TASK_ALWAYS_EAGER=True):
-            response = self.client.post(reverse("api-checklist-job-create"), {"concept_note": upload})
+            response = self.client.post(reverse("api-checklist-job-create"), checklist_job_payload(upload))
 
         self.assertEqual(response.status_code, 202)
         job = ChecklistJob.objects.get()
@@ -423,7 +579,7 @@ class ChecklistGeneratorApiTests(TestCase):
         with self.settings(CELERY_TASK_ALWAYS_EAGER=True):
             with patch("resources.checklist_generator.OpenAI") as openai:
                 openai.return_value.responses.create.return_value = SimpleNamespace(output_text=output_text)
-                response = self.client.post(reverse("api-checklist-job-create"), {"concept_note": upload})
+                response = self.client.post(reverse("api-checklist-job-create"), checklist_job_payload(upload))
 
         self.assertEqual(response.status_code, 202)
         job_payload = response.json()["job"]
@@ -512,3 +668,15 @@ class ThrottleTests(TestCase):
 
         self.assertNotEqual(first.status_code, 429)
         self.assertEqual(second.status_code, 429)
+
+    @override_settings(TRUSTED_PROXY_IPS=["10.0.0.10"], CLIENT_IP_HEADER="HTTP_X_FORWARDED_FOR")
+    def test_client_ip_uses_forwarded_header_only_from_trusted_proxy(self):
+        trusted_request = SimpleNamespace(
+            META={"REMOTE_ADDR": "10.0.0.10", "HTTP_X_FORWARDED_FOR": "203.0.113.5, 10.0.0.10"}
+        )
+        untrusted_request = SimpleNamespace(
+            META={"REMOTE_ADDR": "198.51.100.10", "HTTP_X_FORWARDED_FOR": "203.0.113.5"}
+        )
+
+        self.assertEqual(client_ip(trusted_request), "203.0.113.5")
+        self.assertEqual(client_ip(untrusted_request), "198.51.100.10")

@@ -13,7 +13,7 @@ from reportlab.platypus import ListFlowable, ListItem, Paragraph, SimpleDocTempl
 from django.conf import settings
 from django.core.exceptions import ValidationError
 
-from .upload_validation import validate_docx_archive, validate_file_size
+from .upload_validation import scan_uploaded_file, validate_docx_archive, validate_file_size
 
 
 class ChecklistGenerationError(Exception):
@@ -82,6 +82,7 @@ def extract_docx_text(uploaded_file):
     try:
         validate_file_size(uploaded_file, settings.CHECKLIST_MAX_UPLOAD_BYTES, "Event Concept Note")
         validate_docx_archive(uploaded_file)
+        scan_uploaded_file(uploaded_file, "Event Concept Note")
         uploaded_file.seek(0)
         document = Document(uploaded_file)
     except ValidationError as exc:
@@ -120,7 +121,12 @@ def generate_checklist_payload(concept_note_text, api_key):
             reasoning={"effort": "medium"},
             input=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": USER_PROMPT_TEMPLATE.format(concept_note=safe_concept_note[:80000])},
+                {
+                    "role": "user",
+                    "content": USER_PROMPT_TEMPLATE.format(
+                        concept_note=safe_concept_note[: settings.CHECKLIST_MAX_CONCEPT_NOTE_CHARS]
+                    ),
+                },
             ],
             text={"format": {"type": "json_object"}},
         )

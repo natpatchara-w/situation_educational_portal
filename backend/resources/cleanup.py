@@ -1,6 +1,7 @@
 from django.conf import settings
 from django.utils import timezone
 
+from .audit import audit_event
 from .models import ChecklistJob
 
 
@@ -12,6 +13,7 @@ def delete_expired_checklist_jobs(batch_size=None):
         for field in (job.concept_note, job.generated_pdf):
             if field:
                 field.delete(save=False)
+        audit_event("checklist_job_deleted", user=job.user, job_id=job.public_id)
         job.delete()
         deleted += 1
     return deleted

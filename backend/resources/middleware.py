@@ -1,6 +1,7 @@
 from django.conf import settings
 from django.http import HttpResponse
 
+from .audit import audit_event
 from .throttling import client_ip, is_throttled, throttle_key
 
 
@@ -52,5 +53,6 @@ class DatabaseLoginThrottleMiddleware:
                 settings.ADMIN_LOGIN_THROTTLE_LIMIT,
                 settings.ADMIN_LOGIN_THROTTLE_WINDOW_SECONDS,
             ):
+                audit_event("admin_login_throttled", request=request, username=request.POST.get("username", ""))
                 return HttpResponse("Too many login attempts.", status=429)
         return self.get_response(request)

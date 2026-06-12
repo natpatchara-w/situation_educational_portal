@@ -16,7 +16,10 @@ import {
 } from "lucide-react";
 import "./styles.css";
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URL || `http://${window.location.hostname}:8000`).replace(/\/$/, "");
+const configuredApiBase = import.meta.env.VITE_API_BASE_URL || "";
+const API_BASE = (
+  configuredApiBase || (import.meta.env.DEV ? `http://${window.location.hostname}:8000` : window.location.origin)
+).replace(/\/$/, "");
 const CATEGORIES = [
   { value: "", label: "All files" },
   { value: "checklist", label: "Volunteer Checklists" },
@@ -247,6 +250,7 @@ function ChecklistGenerator() {
   const [previewUrls, setPreviewUrls] = useState({});
   const [previewLoadingId, setPreviewLoadingId] = useState("");
   const [previewError, setPreviewError] = useState({ id: "", message: "" });
+  const [aiAcknowledged, setAiAcknowledged] = useState(false);
   const previewUrlsRef = useRef({});
   const previewRequestsRef = useRef(new Set());
 
@@ -343,12 +347,17 @@ function ChecklistGenerator() {
   }, [previewUrls, selectedItem]);
 
   function addFiles(fileList) {
+    if (!aiAcknowledged) {
+      setLoadError("Confirm AI processing before adding files.");
+      return;
+    }
     const files = Array.from(fileList || []).filter((item) => item.name.toLowerCase().endsWith(".docx"));
     if (files.length === 0) return;
 
     const newItems = files.map((item) => ({
       id: `${Date.now()}-${item.name}-${Math.random().toString(16).slice(2)}`,
       file: item,
+      aiProcessingAcknowledged: aiAcknowledged,
       inputFilename: item.name,
       status: "pending",
       error: "",
@@ -357,6 +366,7 @@ function ChecklistGenerator() {
       downloadUrl: "",
     }));
 
+    setLoadError("");
     setQueue((items) => [...newItems, ...items]);
     setSelectedId(newItems[0].id);
   }
@@ -386,11 +396,20 @@ function ChecklistGenerator() {
 
         <div className="upload-form">
           {loadError && <p className="notice error">{loadError}</p>}
+          <label className="consent-check">
+            <input
+              checked={aiAcknowledged}
+              onChange={(event) => setAiAcknowledged(event.target.checked)}
+              type="checkbox"
+            />
+            <span>I understand uploaded concept notes will be sent to OpenAI for checklist generation.</span>
+          </label>
           <label className="upload-dropzone">
             <Upload size={26} />
             <span>Add DOCX files to queue</span>
             <input
               accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              disabled={!aiAcknowledged}
               multiple
               onChange={(event) => {
                 addFiles(event.target.files);
@@ -487,6 +506,7 @@ function ChecklistGenerator() {
 async function createQueueJob(item) {
   const formData = new FormData();
   formData.append("concept_note", item.file);
+  formData.append("ai_processing_acknowledged", item.aiProcessingAcknowledged ? "true" : "false");
 
   await apiFetch("/api/auth/csrf/");
   const response = await fetch(`${API_BASE}/api/checklists/jobs/create/`, {

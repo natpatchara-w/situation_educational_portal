@@ -1,15 +1,26 @@
 from django.contrib import admin
 from django import forms
 
+from .audit import audit_event
 from .models import ChecklistJob, OpenAISettings, Resource
 
 
 @admin.register(Resource)
 class ResourceAdmin(admin.ModelAdmin):
-    list_display = ("title", "category", "is_active", "uploaded_at")
-    list_filter = ("category", "is_active", "uploaded_at")
+    list_display = ("title", "category", "access_level", "is_active", "uploaded_at")
+    list_filter = ("category", "access_level", "is_active", "uploaded_at")
     search_fields = ("title", "description")
     readonly_fields = ("uploaded_at",)
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        audit_event(
+            "admin_resource_saved",
+            request=request,
+            resource_id=obj.public_id,
+            resource_title=obj.title,
+            changed=change,
+        )
 
 
 class OpenAISettingsForm(forms.ModelForm):
@@ -48,6 +59,10 @@ class OpenAISettingsAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        audit_event("admin_openai_settings_saved", request=request, changed=change)
 
 
 @admin.register(ChecklistJob)

@@ -2,6 +2,7 @@ from celery import shared_task
 from django.core.files.base import ContentFile
 from django.utils.text import get_valid_filename
 
+from .audit import audit_event
 from .checklist_generator import (
     ChecklistGenerationError,
     InvalidConceptNoteError,
@@ -35,6 +36,7 @@ def generate_checklist_job(self, job_id):
         job.status = ChecklistJob.Status.ERROR
         job.error_message = str(exc)
         job.save(update_fields=["status", "error_message", "updated_at"])
+        audit_event("checklist_job_failed", user=job.user, job_id=job.public_id, reason=exc.__class__.__name__)
         return
 
     filename = get_valid_filename(f"{payload['event_title'][:80]} checklist.pdf") or "volunteer-checklist.pdf"
@@ -43,6 +45,7 @@ def generate_checklist_job(self, job_id):
     job.status = ChecklistJob.Status.DONE
     job.error_message = ""
     job.save(update_fields=["output_filename", "generated_pdf", "status", "error_message", "updated_at"])
+    audit_event("checklist_job_completed", user=job.user, job_id=job.public_id, output_filename=job.output_filename)
 
 
 @shared_task(ignore_result=True)
