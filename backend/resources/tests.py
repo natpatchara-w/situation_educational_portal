@@ -780,6 +780,10 @@ class EducationChatApiTests(TestCase):
         system_message = chat_model.return_value.invoke.call_args.args[0][0].content
         self.assertIn("Tsunami Education Guide", system_message)
         self.assertIn("Answer in English.", system_message)
+        self.assertIn("warm, conversational", system_message)
+        self.assertIn("Write like a helpful teammate", system_message)
+        self.assertIn("Do not invent facts outside the context", system_message)
+        self.assertNotIn("Answer only from the reference context below", system_message)
         self.assertNotIn("Staff Education Note", system_message)
 
     def test_chat_rejects_unsupported_language(self):
