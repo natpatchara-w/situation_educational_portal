@@ -489,6 +489,11 @@ class ChecklistGeneratorApiTests(TestCase):
             openai.return_value.responses.create.return_value = SimpleNamespace(output_text=output_text)
             generate_checklist_payload("Contact jane@example.org and api_key=sk_secretvalue12345", "sk-test")
 
+        openai.assert_called_once()
+        self.assertEqual(openai.call_args.kwargs["timeout"], 180)
+        self.assertEqual(openai.call_args.kwargs["max_retries"], 0)
+        self.assertEqual(openai.return_value.responses.create.call_args.kwargs["model"], "gpt-5.4-mini")
+        self.assertEqual(openai.return_value.responses.create.call_args.kwargs["reasoning"], {"effort": "low"})
         user_prompt = openai.return_value.responses.create.call_args.kwargs["input"][1]["content"]
         self.assertNotIn("jane@example.org", user_prompt)
         self.assertNotIn("sk_secretvalue12345", user_prompt)

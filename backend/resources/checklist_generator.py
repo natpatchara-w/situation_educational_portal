@@ -131,11 +131,15 @@ def generate_checklist_payload(concept_note_text, api_key, language="en"):
 
     language = _normalize_language(language)
     safe_concept_note = redact_sensitive_text(concept_note_text)
-    client = OpenAI(api_key=api_key, timeout=settings.OPENAI_REQUEST_TIMEOUT_SECONDS)
+    client = OpenAI(
+        api_key=api_key,
+        timeout=settings.OPENAI_CHECKLIST_TIMEOUT_SECONDS,
+        max_retries=0,
+    )
     try:
         response = client.responses.create(
-            model="gpt-5.5",
-            reasoning={"effort": "medium"},
+            model=settings.OPENAI_CHECKLIST_MODEL,
+            reasoning={"effort": settings.OPENAI_CHECKLIST_REASONING_EFFORT},
             input=[
                 {
                     "role": "system",
