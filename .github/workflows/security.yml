@@ -1,0 +1,79 @@
+name: Security checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install backend dependencies
+        run: uv sync --locked
+
+      - name: Run backend tests
+        run: uv run python backend/manage.py test resources
+
+      - name: Check migration drift
+        run: uv run python backend/manage.py makemigrations --check --dry-run
+
+      - name: Run Django production deploy checks
+        env:
+          DJANGO_ENV: production
+          DJANGO_DEBUG: "false"
+          DJANGO_SECRET_KEY: prod-check-only-secret-key-with-more-than-fifty-characters-12345
+          DJANGO_FIELD_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+          DJANGO_ALLOWED_HOSTS: api.example.org
+          DJANGO_FRONTEND_ORIGINS: https://portal.example.org
+          DJANGO_CSRF_TRUSTED_ORIGINS: https://portal.example.org
+          DJANGO_DATABASE_URL: postgres://volunteer:volunteer@db.example.org:5432/volunteer_portal?sslmode=require
+          CELERY_TASK_ALWAYS_EAGER: "true"
+          DJANGO_USE_X_FORWARDED_PROTO: "true"
+          DJANGO_SECURE_SSL_REDIRECT: "true"
+          DJANGO_SESSION_COOKIE_SECURE: "true"
+          DJANGO_CSRF_COOKIE_SECURE: "true"
+          DJANGO_SECURE_HSTS_SECONDS: "3600"
+          DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS: "true"
+          DJANGO_SECURE_HSTS_PRELOAD: "true"
+          DJANGO_CSP_ENABLED: "true"
+        run: uv run python backend/manage.py check --deploy
+
+      - name: Audit Python dependencies
+        run: |
+          uv export --format requirements-txt --no-hashes --output-file requirements-audit.txt
+          uv tool run pip-audit -r requirements-audit.txt
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        env:
+          VITE_API_BASE_URL: https://api.example.org
+        run: npm run build
+
+      - name: Audit frontend dependencies
+        working-directory: frontend
+        run: npm audit --audit-level=moderate

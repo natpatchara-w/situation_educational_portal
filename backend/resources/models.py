@@ -1,10 +1,15 @@
+import uuid
 from pathlib import Path
-from zipfile import BadZipFile, ZipFile
+from urllib.parse import urlparse
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import FileExtensionValidator
 from django.db import models
+
+from .fields import EncryptedTextField
+from .storage import PrivateMediaStorage
+from .upload_validation import scan_uploaded_file, validate_docx_archive, validate_file_size
 
 
 def validate_resource_file(uploaded_file):
@@ -13,20 +18,15 @@ def validate_resource_file(uploaded_file):
     uploaded_file.seek(0)
 
     try:
+        validate_file_size(uploaded_file, settings.RESOURCE_MAX_UPLOAD_BYTES, "Resource file")
         if extension == ".pdf":
             if uploaded_file.read(5) != b"%PDF-":
                 raise ValidationError("Upload a valid PDF file.")
         elif extension == ".docx":
-            try:
-                with ZipFile(uploaded_file) as archive:
-                    names = set(archive.namelist())
-            except BadZipFile as exc:
-                raise ValidationError("Upload a valid DOCX file.") from exc
-
-            if "[Content_Types].xml" not in names or "word/document.xml" not in names:
-                raise ValidationError("Upload a valid DOCX file.")
+            validate_docx_archive(uploaded_file)
         else:
             raise ValidationError("Upload a PDF or DOCX file.")
+        scan_uploaded_file(uploaded_file, "Resource file")
     finally:
         uploaded_file.seek(position)
 
@@ -36,11 +36,19 @@ class Resource(models.Model):
         CHECKLIST = "checklist", "Volunteer Checklist"
         EDUCATIONAL = "educational", "Educational Resource"
 
+    class AccessLevel(models.TextChoices):
+        AUTHENTICATED = "authenticated", "All authenticated users"
+        CHECKLIST_GENERATORS = "checklist_generators", "Checklist generators"
+        STAFF = "staff", "Staff only"
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     title = models.CharField(max_length=180)
     description = models.TextField(blank=True)
     category = models.CharField(max_length=20, choices=Category.choices)
+    access_level = models.CharField(max_length=24, choices=AccessLevel.choices, default=AccessLevel.AUTHENTICATED)
     pdf_file = models.FileField(
         "resource file",
+        storage=PrivateMediaStorage(),
         upload_to="resources/files/",
         validators=[FileExtensionValidator(["pdf", "docx"]), validate_resource_file],
     )
@@ -55,7 +63,7 @@ class Resource(models.Model):
 
 
 class OpenAISettings(models.Model):
-    api_key = models.CharField("OpenAI API key", max_length=255, blank=True)
+    api_key = EncryptedTextField("OpenAI API key", blank=True)
     checklist_queue_timeout_minutes = models.PositiveIntegerField(
         "checklist queue timeout in minutes",
         default=120,
@@ -76,18 +84,52 @@ class OpenAISettings(models.Model):
         return settings
 
 
+class ChatSource(models.Model):
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    title = models.CharField(max_length=180, blank=True)
+    url = models.URLField(max_length=500, unique=True)
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="chat_sources",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["title", "url"]
+
+    def clean(self):
+        parsed = urlparse(self.url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValidationError({"url": "Enter a public http or https website URL."})
+
+    def __str__(self):
+        return self.title or self.url
+
+
 class ChecklistJob(models.Model):
+    class Language(models.TextChoices):
+        ENGLISH = "en", "English"
+        INDONESIAN = "id", "Indonesian"
+
     class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
         PROCESSING = "processing", "Processing"
         DONE = "done", "Done"
         ERROR = "error", "Error"
 
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="checklist_jobs")
     input_filename = models.CharField(max_length=255)
     output_filename = models.CharField(max_length=255, blank=True)
-    concept_note = models.FileField(upload_to="checklist_jobs/concept_notes/")
-    generated_pdf = models.FileField(upload_to="checklist_jobs/pdfs/", blank=True)
-    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PROCESSING)
+    concept_note = models.FileField(storage=PrivateMediaStorage(), upload_to="checklist_jobs/concept_notes/")
+    generated_pdf = models.FileField(storage=PrivateMediaStorage(), upload_to="checklist_jobs/pdfs/", blank=True)
+    language = models.CharField(max_length=2, choices=Language.choices, default=Language.ENGLISH)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     error_message = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -101,3 +143,19 @@ class ChecklistJob(models.Model):
 
     def __str__(self):
         return self.input_filename
+
+
+class ThrottleRecord(models.Model):
+    scope = models.CharField(max_length=64)
+    key_hash = models.CharField(max_length=64)
+    attempts = models.PositiveIntegerField(default=0)
+    first_attempt_at = models.DateTimeField()
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["scope", "key_hash"], name="unique_throttle_scope_key"),
+        ]
+
+    def __str__(self):
+        return f"{self.scope}:{self.key_hash[:8]}"
