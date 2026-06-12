@@ -60,7 +60,7 @@ services:
       - key: GUNICORN_THREADS
         value: "10"
       - key: DJANGO_CHAT_MAX_PARALLEL_MODEL_CALLS
-        value: "4"
+        value: "2"
       - key: DJANGO_CHAT_SOURCE_CACHE_TTL_SECONDS
         value: "600"
       - key: DJANGO_CHAT_SOURCE_FAILURE_CACHE_TTL_SECONDS
