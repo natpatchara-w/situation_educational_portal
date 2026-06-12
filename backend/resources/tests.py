@@ -1,5 +1,8 @@
 import json
+import threading
+import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from http.client import InvalidURL
 from io import BytesIO
 from pathlib import Path
@@ -726,6 +729,7 @@ class ChecklistGeneratorApiTests(TestCase):
 @override_settings(CHAT_VECTOR_SEARCH_ENABLED=False)
 class EducationChatApiTests(TestCase):
     def setUp(self):
+        education_chat._clear_website_document_cache()
         self.user = User.objects.create_user(username="volunteer", password="test-password")
         self.staff = User.objects.create_user(username="staff", password="test-password", is_staff=True)
         OpenAISettings.objects.create(api_key="sk-test")
@@ -987,6 +991,14 @@ class EducationChatApiTests(TestCase):
 
         self.assertTrue(education_chat.is_public_website_url("https://example.org/education"))
 
+    def test_chat_source_links_ignore_non_content_share_hosts(self):
+        normalized = education_chat._normalize_link(
+            "https://gmls.org",
+            "https://mail.google.com/mail/?ui=2&view=cm&body=Link:https%3A%2F%2Fgmls.org",
+        )
+
+        self.assertEqual("", normalized)
+
     def test_website_sources_skip_direct_social_media_sources(self):
         ChatSource.objects.create(title="Instagram", url="https://www.instagram.com/gmls", created_by=self.staff)
 
@@ -1001,6 +1013,38 @@ class EducationChatApiTests(TestCase):
             document = education_chat._fetch_website_document("https://example.org/share?text=Bad%20URL")
 
         self.assertIsNone(document)
+
+    @override_settings(CHAT_SOURCE_CACHE_TTL_SECONDS=60, CHAT_SOURCE_FAILURE_CACHE_TTL_SECONDS=60)
+    def test_website_fetch_reuses_inflight_request_for_concurrent_calls(self):
+        education_chat._clear_website_document_cache()
+        opened_urls = []
+        barrier = threading.Barrier(6)
+
+        def open_website(request, timeout=None):
+            opened_urls.append(request.full_url)
+            time.sleep(0.05)
+            return FakeWebsiteResponse(
+                """
+                <html>
+                  <head><title>Concurrent Education Page</title></head>
+                  <body>Shared source content for concurrent chat requests.</body>
+                </html>
+                """
+            )
+
+        def fetch_document():
+            barrier.wait()
+            return education_chat._fetch_website_document("https://example.org/concurrent")
+
+        with patch("resources.education_chat.URL_OPENER.open", side_effect=open_website):
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                futures = [executor.submit(fetch_document) for _index in range(5)]
+                barrier.wait()
+                documents = [future.result() for future in futures]
+
+        self.assertEqual(opened_urls, ["https://example.org/concurrent"])
+        self.assertTrue(all(document is not None for document in documents))
+        self.assertTrue(all(document.title == "Concurrent Education Page" for document in documents))
 
     @override_settings(CHAT_MAX_GROUNDING_SOURCES=10, CHAT_MAX_LINKED_SOURCES_PER_WEBSITE=3)
     def test_chat_does_not_fetch_social_links_discovered_on_website_source(self):

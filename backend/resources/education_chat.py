@@ -1,6 +1,9 @@
 import ipaddress
 import logging
 import re
+import threading
+import time
+from contextlib import contextmanager
 from difflib import get_close_matches
 from dataclasses import dataclass
 from html.parser import HTMLParser
@@ -108,6 +111,11 @@ No approved portal educational files, staff-approved websites, linked source doc
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9]{3,}")
 BLOCKED_HOSTS = {"localhost", "localhost.localdomain"}
+NON_CONTENT_HOSTS = {
+    "accounts.google.com",
+    "calendar.google.com",
+    "mail.google.com",
+}
 SOCIAL_MEDIA_HOSTS = {
     "bsky.app",
     "discord.com",
@@ -136,6 +144,11 @@ SOCIAL_MEDIA_HOSTS = {
     "youtu.be",
     "youtube.com",
 }
+_WEBSITE_DOCUMENT_CACHE = {}
+_WEBSITE_DOCUMENT_INFLIGHT = {}
+_WEBSITE_DOCUMENT_CACHE_LOCK = threading.Lock()
+_MODEL_SEMAPHORES = {}
+_MODEL_SEMAPHORES_LOCK = threading.Lock()
 CONTENT_MARKERS = {
     "artikel",
     "audio",
@@ -325,7 +338,7 @@ def is_public_website_url(url):
         return False
 
     host = (parsed.hostname or "").strip().lower()
-    if not host or host in BLOCKED_HOSTS or host.endswith(".localhost") or _is_social_media_host(host):
+    if not host or host in BLOCKED_HOSTS or host.endswith(".localhost") or _is_blocked_crawl_host(host):
         return False
 
     try:
@@ -348,6 +361,36 @@ def _is_social_media_host(host):
     return any(host == blocked_host or host.endswith(f".{blocked_host}") for blocked_host in SOCIAL_MEDIA_HOSTS)
 
 
+def _is_non_content_host(host):
+    host = str(host or "").strip().lower().removeprefix("www.")
+    return any(host == blocked_host or host.endswith(f".{blocked_host}") for blocked_host in NON_CONTENT_HOSTS)
+
+
+def _is_blocked_crawl_host(host):
+    return _is_social_media_host(host) or _is_non_content_host(host)
+
+
+def _clear_website_document_cache():
+    with _WEBSITE_DOCUMENT_CACHE_LOCK:
+        _WEBSITE_DOCUMENT_CACHE.clear()
+        _WEBSITE_DOCUMENT_INFLIGHT.clear()
+
+
+@contextmanager
+def _model_call_slot():
+    limit = max(1, int(getattr(settings, "CHAT_MAX_PARALLEL_MODEL_CALLS", 4)))
+    with _MODEL_SEMAPHORES_LOCK:
+        semaphore = _MODEL_SEMAPHORES.get(limit)
+        if semaphore is None:
+            semaphore = threading.BoundedSemaphore(limit)
+            _MODEL_SEMAPHORES[limit] = semaphore
+    semaphore.acquire()
+    try:
+        yield
+    finally:
+        semaphore.release()
+
+
 def _build_chat_graph(api_key):
     def generate_answer(state):
         model = ChatOpenAI(
@@ -366,7 +409,8 @@ def _build_chat_graph(api_key):
         ]
         messages.extend(_history_to_messages(state["history"]))
         messages.append(HumanMessage(content=state["question"]))
-        response = model.invoke(messages)
+        with _model_call_slot():
+            response = model.invoke(messages)
         return {"answer": _message_text(response)}
 
     graph = StateGraph(ChatState)
@@ -518,6 +562,74 @@ def _extract_pdf_text(resource):
 
 
 def _fetch_website_document(url):
+    if settings.CHAT_SOURCE_CACHE_TTL_SECONDS <= 0 and settings.CHAT_SOURCE_FAILURE_CACHE_TTL_SECONDS <= 0:
+        return _fetch_website_document_uncached(url)
+
+    cached, document = _cached_website_document(url)
+    if cached:
+        return document
+
+    owner = False
+    with _WEBSITE_DOCUMENT_CACHE_LOCK:
+        cached, document = _cached_website_document_locked(url, time.monotonic())
+        if cached:
+            return document
+        event = _WEBSITE_DOCUMENT_INFLIGHT.get(url)
+        if event is None:
+            event = threading.Event()
+            _WEBSITE_DOCUMENT_INFLIGHT[url] = event
+            owner = True
+
+    if not owner:
+        wait_timeout = max(settings.CHAT_SOURCE_FETCH_TIMEOUT_SECONDS + 10, 15)
+        if not event.wait(wait_timeout):
+            logger.warning("education_chat_website_fetch_wait_timeout url=%s", url)
+            return None
+        cached, document = _cached_website_document(url)
+        return document if cached else None
+
+    document = None
+    try:
+        document = _fetch_website_document_uncached(url)
+        return document
+    finally:
+        ttl = settings.CHAT_SOURCE_CACHE_TTL_SECONDS if document is not None else settings.CHAT_SOURCE_FAILURE_CACHE_TTL_SECONDS
+        with _WEBSITE_DOCUMENT_CACHE_LOCK:
+            if ttl > 0:
+                _store_cached_website_document_locked(url, document, ttl)
+            event.set()
+            _WEBSITE_DOCUMENT_INFLIGHT.pop(url, None)
+
+
+def _cached_website_document(url):
+    with _WEBSITE_DOCUMENT_CACHE_LOCK:
+        return _cached_website_document_locked(url, time.monotonic())
+
+
+def _cached_website_document_locked(url, now):
+    entry = _WEBSITE_DOCUMENT_CACHE.get(url)
+    if entry is None:
+        return False, None
+    expires_at, document = entry
+    if expires_at <= now:
+        _WEBSITE_DOCUMENT_CACHE.pop(url, None)
+        return False, None
+    return True, document
+
+
+def _store_cached_website_document_locked(url, document, ttl):
+    now = time.monotonic()
+    max_items = max(1, int(getattr(settings, "CHAT_SOURCE_CACHE_MAX_ITEMS", 128)))
+    expired_urls = [cached_url for cached_url, (expires_at, _document) in _WEBSITE_DOCUMENT_CACHE.items() if expires_at <= now]
+    for cached_url in expired_urls:
+        _WEBSITE_DOCUMENT_CACHE.pop(cached_url, None)
+    while len(_WEBSITE_DOCUMENT_CACHE) >= max_items:
+        oldest_url = min(_WEBSITE_DOCUMENT_CACHE, key=lambda cached_url: _WEBSITE_DOCUMENT_CACHE[cached_url][0])
+        _WEBSITE_DOCUMENT_CACHE.pop(oldest_url, None)
+    _WEBSITE_DOCUMENT_CACHE[url] = (now + ttl, document)
+
+
+def _fetch_website_document_uncached(url):
     request = Request(url, headers={"User-Agent": settings.CHAT_SOURCE_USER_AGENT})
     try:
         with URL_OPENER.open(request, timeout=settings.CHAT_SOURCE_FETCH_TIMEOUT_SECONDS) as response:
