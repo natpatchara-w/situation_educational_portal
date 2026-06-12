@@ -1,0 +1,92 @@
+previews:
+  generation: manual
+
+services:
+  - type: web
+    runtime: python
+    name: datakind-gmls-backend
+    rootDir: .
+    region: singapore
+    plan: free
+    buildCommand: python -m pip install --upgrade pip uv && uv sync --locked && uv run python backend/manage.py collectstatic --noinput
+    startCommand: uv run python backend/manage.py migrate --noinput && PYTHONPATH=backend uv run gunicorn volunteer_portal.wsgi:application
+    healthCheckPath: /api/auth/csrf/
+    autoDeployTrigger: commit
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DJANGO_ENV
+        value: production
+      - key: DJANGO_DEBUG
+        value: "False"
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DJANGO_ALLOWED_HOSTS
+        value: datakind-gmls-backend.onrender.com
+      - key: DJANGO_DATABASE_URL
+        fromDatabase:
+          name: datakind-gmls-db
+          property: connectionString
+      - key: DATABASE_URL
+        fromDatabase:
+          name: datakind-gmls-db
+          property: connectionString
+      - key: DJANGO_FRONTEND_ORIGINS
+        value: https://datakind-gmls-frontend.onrender.com
+      - key: DJANGO_CSRF_TRUSTED_ORIGINS
+        value: https://datakind-gmls-frontend.onrender.com
+      - key: DJANGO_FIELD_ENCRYPTION_KEY
+        sync: false
+      - key: DJANGO_AI_CHECKLIST_GENERATION_ENABLED
+        value: "True"
+      - key: CELERY_TASK_ALWAYS_EAGER
+        value: "True"
+      - key: DJANGO_UPLOAD_SCANNING_REQUIRED
+        value: "False"
+      - key: DJANGO_RESOURCE_MAX_UPLOAD_BYTES
+        value: "104857600"
+      - key: DJANGO_USE_X_FORWARDED_PROTO
+        value: "True"
+      - key: DJANGO_SECURE_SSL_REDIRECT
+        value: "True"
+      - key: DJANGO_SESSION_COOKIE_SECURE
+        value: "True"
+      - key: DJANGO_CSRF_COOKIE_SECURE
+        value: "True"
+      - key: DJANGO_CHAT_VECTOR_SEARCH_ENABLED
+        value: "False"
+      - key: OPENAI_CHAT_REASONING_EFFORT
+        value: low
+      - key: GUNICORN_THREADS
+        value: "10"
+      - key: DJANGO_CHAT_MAX_PARALLEL_MODEL_CALLS
+        value: "2"
+      - key: DJANGO_CHAT_SOURCE_CACHE_TTL_SECONDS
+        value: "600"
+      - key: DJANGO_CHAT_SOURCE_FAILURE_CACHE_TTL_SECONDS
+        value: "60"
+
+  - type: web
+    runtime: static
+    name: datakind-gmls-frontend
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    autoDeployTrigger: commit
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: NODE_VERSION
+        value: 22.12.0
+      - key: VITE_API_BASE_URL
+        value: https://datakind-gmls-backend.onrender.com
+
+databases:
+  - name: datakind-gmls-db
+    region: singapore
+    plan: free
+    databaseName: datakind_gmls
+    user: datakind_gmls
+    postgresMajorVersion: "17"
