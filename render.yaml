@@ -53,6 +53,8 @@ services:
         value: "True"
       - key: DJANGO_CSRF_COOKIE_SECURE
         value: "True"
+      - key: DJANGO_CHAT_VECTOR_SEARCH_ENABLED
+        value: "False"
 
   - type: web
     runtime: static
