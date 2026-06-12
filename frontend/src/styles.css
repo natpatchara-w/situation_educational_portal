@@ -558,7 +558,8 @@ h1 {
 
 .login-panel h1 {
   margin-bottom: 22px;
-  font-size: clamp(2rem, 8vw, 3rem);
+  font-size: 2.15rem;
+  line-height: 1.08;
 }
 
 .login-panel form {
@@ -625,5 +626,20 @@ h1 {
   .generator-submit,
   .ghost-button {
     width: 100%;
+  }
+}
+
+@media (max-width: 420px) {
+  .login-page,
+  .status-screen {
+    padding: 14px;
+  }
+
+  .login-panel {
+    padding: 20px;
+  }
+
+  .login-panel h1 {
+    font-size: 1.75rem;
   }
 }

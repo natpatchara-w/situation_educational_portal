@@ -7,6 +7,7 @@ from django.db.models import Q
 from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.utils import timezone
 from django.utils.text import get_valid_filename
+from django.middleware.csrf import get_token
 from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
@@ -48,7 +49,7 @@ def checklist_permission_required(view_func):
 @ensure_csrf_cookie
 @require_GET
 def csrf(request):
-    return JsonResponse({"detail": "CSRF cookie set."})
+    return JsonResponse({"detail": "CSRF cookie set.", "csrfToken": get_token(request)})
 
 
 @require_POST

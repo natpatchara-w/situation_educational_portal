@@ -22,6 +22,7 @@ const CATEGORIES = [
   { value: "checklist", label: "Volunteer Checklists" },
   { value: "educational", label: "Educational Resources" },
 ];
+let csrfToken = "";
 
 function getApiBase() {
   const configuredBase =
@@ -36,23 +37,33 @@ function getCookie(name) {
     ?.split("=")[1];
 }
 
+function getCsrfToken() {
+  return csrfToken || getCookie("csrftoken") || "";
+}
+
+function rememberCsrfToken(payload) {
+  if (payload?.csrfToken) csrfToken = payload.csrfToken;
+}
+
 async function apiFetch(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
     credentials: "include",
     headers: {
       "Content-Type": "application/json",
-      ...(options.method && options.method !== "GET" ? { "X-CSRFToken": getCookie("csrftoken") || "" } : {}),
+      ...(options.method && options.method !== "GET" ? { "X-CSRFToken": getCsrfToken() } : {}),
       ...options.headers,
     },
     ...options,
   });
 
+  const payload = await response.json().catch(() => ({}));
+  rememberCsrfToken(payload);
+
   if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
     throw new Error(payload.detail || "Something went wrong.");
   }
 
-  return response.json();
+  return payload;
 }
 
 function App() {
@@ -499,7 +510,7 @@ async function createQueueJob(item) {
     method: "POST",
     credentials: "include",
     headers: {
-      "X-CSRFToken": getCookie("csrftoken") || "",
+      "X-CSRFToken": getCsrfToken(),
     },
     body: formData,
   });
