@@ -91,7 +91,7 @@ redis-server
 uv run celery -A volunteer_portal worker --workdir backend --loglevel INFO
 ```
 
-Use eager mode only for tests or isolated debugging:
+Local development defaults to eager mode so checklist generation works without a Redis/Celery worker. Set eager mode explicitly when you want to force synchronous task execution in another isolated debugging environment:
 
 ```bash
 CELERY_TASK_ALWAYS_EAGER=true

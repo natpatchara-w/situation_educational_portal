@@ -61,8 +61,8 @@ def build_readable_docx(text="Volunteer checklist", include_heading=True):
     return buffer.getvalue()
 
 
-def checklist_job_payload(upload):
-    return {"concept_note": upload, "ai_processing_acknowledged": "true"}
+def checklist_job_payload(upload, language="en"):
+    return {"concept_note": upload, "ai_processing_acknowledged": "true", "language": language}
 
 
 class FakeResponseHeaders:
@@ -391,6 +391,37 @@ class ChecklistGeneratorApiTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
 
+    def test_checklist_job_create_rejects_unsupported_language(self):
+        self.client.login(username="volunteer", password="test-password")
+        self.user.user_permissions.add(Permission.objects.get(codename="can_generate_checklist"))
+        upload = SimpleUploadedFile(
+            "concept-note.docx",
+            build_readable_docx("Marimba workshop for village students."),
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+
+        response = self.client.post(reverse("api-checklist-job-create"), checklist_job_payload(upload, language="fr"))
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "Unsupported language.")
+        self.assertFalse(ChecklistJob.objects.exists())
+
+    def test_checklist_job_create_stores_and_serializes_language(self):
+        self.client.login(username="volunteer", password="test-password")
+        self.user.user_permissions.add(Permission.objects.get(codename="can_generate_checklist"))
+        upload = SimpleUploadedFile(
+            "concept-note.docx",
+            build_readable_docx("Marimba workshop for village students."),
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+
+        with patch("resources.tasks.generate_checklist_job.delay"):
+            response = self.client.post(reverse("api-checklist-job-create"), checklist_job_payload(upload, language="id"))
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["job"]["language"], "id")
+        self.assertEqual(ChecklistJob.objects.get().language, ChecklistJob.Language.INDONESIAN)
+
     @override_settings(CHECKLIST_JOB_THROTTLE_LIMIT=1)
     def test_checklist_job_create_is_throttled(self):
         self.client.login(username="volunteer", password="test-password")
@@ -462,6 +493,23 @@ class ChecklistGeneratorApiTests(TestCase):
         self.assertNotIn("jane@example.org", user_prompt)
         self.assertNotIn("sk_secretvalue12345", user_prompt)
         self.assertIn("[redacted-email]", user_prompt)
+
+    def test_generate_checklist_prompt_uses_requested_language(self):
+        output_text = json.dumps(
+            {
+                "event_title": "Lokakarya Aman",
+                "source_note": "Dibuat.",
+                "sections": [{"title": "Daftar cepat", "items": ["Bawa air."]}],
+            }
+        )
+
+        with patch("resources.checklist_generator.OpenAI") as openai:
+            openai.return_value.responses.create.return_value = SimpleNamespace(output_text=output_text)
+            generate_checklist_payload("Lokakarya marimba untuk siswa desa.", "sk-test", language="id")
+
+        system_prompt = openai.return_value.responses.create.call_args.kwargs["input"][0]["content"]
+        self.assertIn("Indonesian/Bahasa Indonesia", system_prompt)
+        self.assertNotIn("Use English unless", system_prompt)
 
     @override_settings(CHECKLIST_MAX_CONCEPT_NOTE_CHARS=20)
     def test_generate_checklist_bounds_prompt_size(self):
@@ -725,7 +773,41 @@ class EducationChatApiTests(TestCase):
         self.assertEqual(chat_model.call_args.kwargs["reasoning"], {"effort": "medium"})
         system_message = chat_model.return_value.invoke.call_args.args[0][0].content
         self.assertIn("Tsunami Education Guide", system_message)
+        self.assertIn("Answer in English.", system_message)
         self.assertNotIn("Staff Education Note", system_message)
+
+    def test_chat_rejects_unsupported_language(self):
+        self.client.login(username="volunteer", password="test-password")
+
+        response = self.client.post(
+            reverse("api-chat-reply"),
+            data=json.dumps({"message": "What should volunteers do during shaking?", "language": "fr"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "Unsupported language.")
+
+    def test_chat_prompt_uses_requested_language(self):
+        self.client.login(username="volunteer", password="test-password")
+
+        with patch("resources.education_chat.ChatOpenAI") as chat_model:
+            chat_model.return_value.invoke.return_value = SimpleNamespace(content="Gunakan Panduan Edukasi Tsunami.")
+            response = self.client.post(
+                reverse("api-chat-reply"),
+                data=json.dumps(
+                    {
+                        "message": "Apa yang harus dilakukan relawan saat guncangan?",
+                        "history": [],
+                        "language": "id",
+                    }
+                ),
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        system_message = chat_model.return_value.invoke.call_args.args[0][0].content
+        self.assertIn("Answer in Indonesian/Bahasa Indonesia.", system_message)
 
     @override_settings(CHAT_MAX_GROUNDING_SOURCES=10, CHAT_MAX_LINKED_SOURCES_PER_WEBSITE=2)
     def test_chat_searches_linked_pages_and_documents_from_website_source(self):

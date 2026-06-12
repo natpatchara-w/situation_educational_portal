@@ -29,6 +29,7 @@ CONTENT_TYPES = {
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".pdf": "application/pdf",
 }
+SUPPORTED_LANGUAGES = {choice.value for choice in ChecklistJob.Language}
 
 
 def api_login_required(view_func):
@@ -193,6 +194,9 @@ def checklist_job_create(request):
     concept_note = request.FILES.get("concept_note")
     if concept_note is None:
         return JsonResponse({"detail": "Upload a DOCX Event Concept Note."}, status=400)
+    language = _request_language(request.POST.get("language"))
+    if language is None:
+        return JsonResponse({"detail": "Unsupported language."}, status=400)
 
     openai_settings = OpenAISettings.get_solo()
     expires_at = timezone.now() + timezone.timedelta(minutes=openai_settings.checklist_queue_timeout_minutes)
@@ -200,6 +204,7 @@ def checklist_job_create(request):
         user=request.user,
         input_filename=get_valid_filename(concept_note.name) or "concept-note.docx",
         concept_note=concept_note,
+        language=language,
         expires_at=expires_at,
     )
     audit_event("checklist_job_created", request=request, job_id=job.public_id, input_filename=job.input_filename)
@@ -250,6 +255,9 @@ def chat_reply(request):
         return JsonResponse({"detail": "Enter a question for the education chat."}, status=400)
     if len(message) > settings.CHAT_MAX_MESSAGE_CHARS:
         return JsonResponse({"detail": "Chat message is too long."}, status=400)
+    language = _request_language(payload.get("language"))
+    if language is None:
+        return JsonResponse({"detail": "Unsupported language."}, status=400)
 
     openai_settings = OpenAISettings.get_solo()
     try:
@@ -258,6 +266,7 @@ def chat_reply(request):
             question=message,
             history=payload.get("history", []),
             api_key=openai_settings.api_key.strip(),
+            language=language,
         )
     except EducationChatConfigurationError as exc:
         return JsonResponse({"detail": str(exc)}, status=503)
@@ -364,6 +373,7 @@ def _serialize_checklist_job(job):
         "id": str(job.public_id),
         "inputFilename": job.input_filename,
         "outputFilename": job.output_filename or "volunteer-checklist.pdf",
+        "language": job.language,
         "status": job.status,
         "error": job.error_message,
         "createdAt": job.created_at.isoformat(),
@@ -379,6 +389,13 @@ def _get_current_checklist_job(user, job_id):
         return ChecklistJob.objects.get(public_id=job_id, user=user, expires_at__gt=timezone.now())
     except ChecklistJob.DoesNotExist as exc:
         raise Http404("Checklist job not found.") from exc
+
+
+def _request_language(value):
+    language = str(value or ChecklistJob.Language.ENGLISH).strip().lower()
+    if language not in SUPPORTED_LANGUAGES:
+        return None
+    return language
 
 
 def _visible_resources_for_user(user):

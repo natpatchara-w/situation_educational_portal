@@ -42,6 +42,29 @@ textarea {
   margin-bottom: 24px;
 }
 
+.topbar-actions,
+.login-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.topbar-actions {
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.language-toggle {
+  flex-wrap: nowrap;
+}
+
+.language-toggle button {
+  min-width: 48px;
+  padding: 0 10px;
+  font-weight: 800;
+}
+
 .page-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -805,6 +828,14 @@ h1 {
   font-size: clamp(2rem, 8vw, 3rem);
 }
 
+.login-header {
+  margin-bottom: 22px;
+}
+
+.login-header h1 {
+  margin-bottom: 0;
+}
+
 .login-panel form {
   display: grid;
   gap: 14px;
@@ -841,6 +872,8 @@ h1 {
   }
 
   .topbar,
+  .topbar-actions,
+  .login-header,
   .controls,
   .summary-band,
   .generator-panel,
@@ -874,6 +907,7 @@ h1 {
   .download-button,
   .generator-submit,
   .ghost-button,
+  .topbar-actions .language-toggle,
   .send-button {
     width: 100%;
   }

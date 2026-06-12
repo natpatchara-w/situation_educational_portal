@@ -30,7 +30,7 @@ def generate_checklist_job(self, job_id):
         with job.concept_note.open("rb") as uploaded_file:
             concept_note_text = extract_docx_text(uploaded_file)
         settings = OpenAISettings.get_solo()
-        payload = generate_checklist_payload(concept_note_text, settings.api_key.strip())
+        payload = generate_checklist_payload(concept_note_text, settings.api_key.strip(), language=job.language)
         pdf = render_checklist_pdf(payload)
     except (InvalidConceptNoteError, OpenAIConfigurationError, ChecklistGenerationError) as exc:
         job.status = ChecklistJob.Status.ERROR
@@ -39,7 +39,9 @@ def generate_checklist_job(self, job_id):
         audit_event("checklist_job_failed", user=job.user, job_id=job.public_id, reason=exc.__class__.__name__)
         return
 
-    filename = get_valid_filename(f"{payload['event_title'][:80]} checklist.pdf") or "volunteer-checklist.pdf"
+    suffix = "daftar-periksa.pdf" if job.language == ChecklistJob.Language.INDONESIAN else "checklist.pdf"
+    fallback_filename = "daftar-periksa-relawan.pdf" if job.language == ChecklistJob.Language.INDONESIAN else "volunteer-checklist.pdf"
+    filename = get_valid_filename(f"{payload['event_title'][:80]} {suffix}") or fallback_filename
     job.output_filename = filename
     job.generated_pdf.save(filename, ContentFile(pdf), save=False)
     job.status = ChecklistJob.Status.DONE
