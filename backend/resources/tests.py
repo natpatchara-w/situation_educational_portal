@@ -966,6 +966,14 @@ class EducationChatApiTests(TestCase):
             "https://bnpb.go.id/share?url=https://bnpb.go.id/definisi-bencana&text=Definisi%20Bencana",
         )
 
+    def test_chat_source_links_skip_social_share_urls(self):
+        normalized = education_chat._normalize_link(
+            "https://bnpb.go.id/definisi-bencana",
+            "https://twitter.com/share?url=https://bnpb.go.id/definisi-bencana&text=Definisi Bencana",
+        )
+
+        self.assertEqual(normalized, "")
+
     def test_website_fetch_skips_invalid_external_urls(self):
         with patch("resources.education_chat.URL_OPENER.open", side_effect=InvalidURL("bad url")):
             document = education_chat._fetch_website_document("https://example.org/share?text=Bad%20URL")

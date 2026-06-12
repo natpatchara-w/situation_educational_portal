@@ -106,6 +106,17 @@ No approved portal educational files, staff-approved websites, linked source doc
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9]{3,}")
 BLOCKED_HOSTS = {"localhost", "localhost.localdomain"}
+IGNORED_LINK_HOSTS = {
+    "api.whatsapp.com",
+    "facebook.com",
+    "linkedin.com",
+    "twitter.com",
+    "wa.me",
+    "www.facebook.com",
+    "www.linkedin.com",
+    "www.twitter.com",
+    "x.com",
+}
 CONTENT_MARKERS = {
     "artikel",
     "audio",
@@ -582,6 +593,9 @@ def _normalize_link(base_url, href):
     url = urljoin(base_url, href)
     url, _fragment = urldefrag(url)
     url = _quote_unsafe_url(url)
+    host = (urlparse(url).hostname or "").strip().lower()
+    if host in IGNORED_LINK_HOSTS:
+        return ""
     if not is_public_website_url(url):
         return ""
     return url
