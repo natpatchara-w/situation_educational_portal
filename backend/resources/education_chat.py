@@ -7,8 +7,7 @@ from html.parser import HTMLParser
 from io import BytesIO
 from pathlib import Path
 from typing import TypedDict
-from urllib.error import HTTPError, URLError
-from urllib.parse import urldefrag, urljoin, urlparse
+from urllib.parse import quote, urldefrag, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from django.conf import settings
@@ -490,7 +489,8 @@ def _fetch_website_document(url):
             content_type = response.headers.get("content-type", "").lower()
             raw_response = response.read(settings.CHAT_SOURCE_FETCH_MAX_BYTES + 1)
             charset = response.headers.get_content_charset() or "utf-8"
-    except (HTTPError, URLError, TimeoutError, ValueError):
+    except Exception as exc:
+        logger.warning("education_chat_website_fetch_failed url=%s error=%s", url, exc)
         return None
 
     truncated = len(raw_response) > settings.CHAT_SOURCE_FETCH_MAX_BYTES
@@ -581,9 +581,18 @@ def _normalize_link(base_url, href):
         return ""
     url = urljoin(base_url, href)
     url, _fragment = urldefrag(url)
+    url = _quote_unsafe_url(url)
     if not is_public_website_url(url):
         return ""
     return url
+
+
+def _quote_unsafe_url(url):
+    parsed = urlparse(url)
+    return parsed._replace(
+        path=quote(parsed.path, safe="/%:@"),
+        query=quote(parsed.query, safe="=&?/:;+,%@"),
+    ).geturl()
 
 
 def _unique_links(links):

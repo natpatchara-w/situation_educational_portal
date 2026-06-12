@@ -1,5 +1,6 @@
 import json
 import uuid
+from http.client import InvalidURL
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -953,6 +954,23 @@ class EducationChatApiTests(TestCase):
         self.assertIn("gempa bumi", education_chat._query_terms("waht is earthqauke"))
         source_titles = [source["title"] for source in response.json()["sources"]]
         self.assertIn("Volunteer education glossary: Earthquake", source_titles)
+
+    def test_chat_source_links_escape_unsafe_query_text(self):
+        normalized = education_chat._normalize_link(
+            "https://bnpb.go.id/definisi-bencana",
+            "/share?url=https://bnpb.go.id/definisi-bencana&text=Definisi Bencana",
+        )
+
+        self.assertEqual(
+            normalized,
+            "https://bnpb.go.id/share?url=https://bnpb.go.id/definisi-bencana&text=Definisi%20Bencana",
+        )
+
+    def test_website_fetch_skips_invalid_external_urls(self):
+        with patch("resources.education_chat.URL_OPENER.open", side_effect=InvalidURL("bad url")):
+            document = education_chat._fetch_website_document("https://example.org/share?text=Bad%20URL")
+
+        self.assertIsNone(document)
 
     @override_settings(CHAT_MAX_GROUNDING_SOURCES=8, CHAT_MAX_LINKED_SOURCES_PER_WEBSITE=1)
     def test_chat_expands_english_earthquake_query_to_indonesian_linked_sources(self):
