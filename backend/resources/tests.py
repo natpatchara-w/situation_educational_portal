@@ -970,11 +970,84 @@ class EducationChatApiTests(TestCase):
             "https://bnpb.go.id/share?url=https://bnpb.go.id/definisi-bencana&text=Definisi%20Bencana",
         )
 
+    def test_chat_source_links_ignore_social_media_hosts(self):
+        social_links = [
+            "https://facebook.com/example",
+            "https://www.instagram.com/example",
+            "https://m.youtube.com/watch?v=abc123",
+            "https://x.com/example/status/1",
+            "https://t.me/example",
+            "https://wa.me/6281234567890",
+        ]
+
+        for link in social_links:
+            with self.subTest(link=link):
+                self.assertFalse(education_chat.is_public_website_url(link))
+                self.assertEqual("", education_chat._normalize_link("https://example.org/education", link))
+
+        self.assertTrue(education_chat.is_public_website_url("https://example.org/education"))
+
+    def test_website_sources_skip_direct_social_media_sources(self):
+        ChatSource.objects.create(title="Instagram", url="https://www.instagram.com/gmls", created_by=self.staff)
+
+        with patch("resources.education_chat.URL_OPENER.open") as open_website:
+            sources = education_chat._website_sources({"tsunami"})
+
+        self.assertEqual(sources, [])
+        open_website.assert_not_called()
+
     def test_website_fetch_skips_invalid_external_urls(self):
         with patch("resources.education_chat.URL_OPENER.open", side_effect=InvalidURL("bad url")):
             document = education_chat._fetch_website_document("https://example.org/share?text=Bad%20URL")
 
         self.assertIsNone(document)
+
+    @override_settings(CHAT_MAX_GROUNDING_SOURCES=10, CHAT_MAX_LINKED_SOURCES_PER_WEBSITE=3)
+    def test_chat_does_not_fetch_social_links_discovered_on_website_source(self):
+        ChatSource.objects.create(title="GMLS Education", url="https://example.org/education", created_by=self.staff)
+        opened_urls = []
+        responses = {
+            "https://example.org/education": FakeWebsiteResponse(
+                """
+                <html>
+                  <head><title>Education Home</title></head>
+                  <body>
+                    <a href="https://www.instagram.com/gmls">Tsunami volunteer updates</a>
+                    <a href="https://facebook.com/gmls">Earthquake volunteer updates</a>
+                    <a href="https://x.com/gmls/status/1">Mitigation field thread</a>
+                    <a href="/guides/tsunami">Tsunami linked guide</a>
+                  </body>
+                </html>
+                """
+            ),
+            "https://example.org/guides/tsunami": FakeWebsiteResponse(
+                """
+                <html>
+                  <head><title>Tsunami Linked Guide</title></head>
+                  <body>Linked guide says volunteers should move inland after official evacuation direction.</body>
+                </html>
+                """
+            ),
+        }
+
+        def open_website(request, timeout=None):
+            opened_urls.append(request.full_url)
+            return responses[request.full_url]
+
+        self.client.login(username="volunteer", password="test-password")
+        with patch("resources.education_chat.URL_OPENER.open", side_effect=open_website):
+            with patch("resources.education_chat.ChatOpenAI") as chat_model:
+                chat_model.return_value.invoke.return_value = SimpleNamespace(content="Use the linked website sources.")
+                response = self.client.post(
+                    reverse("api-chat-reply"),
+                    data=json.dumps({"message": "What do tsunami volunteer sources say?"}),
+                    content_type="application/json",
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(opened_urls, ["https://example.org/education", "https://example.org/guides/tsunami"])
+        system_message = chat_model.return_value.invoke.call_args.args[0][0].content
+        self.assertIn("Linked guide says volunteers should move inland", system_message)
 
     @override_settings(CHAT_MAX_GROUNDING_SOURCES=8, CHAT_MAX_LINKED_SOURCES_PER_WEBSITE=1)
     def test_chat_expands_english_earthquake_query_to_indonesian_linked_sources(self):

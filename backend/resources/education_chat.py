@@ -108,6 +108,34 @@ No approved portal educational files, staff-approved websites, linked source doc
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9]{3,}")
 BLOCKED_HOSTS = {"localhost", "localhost.localdomain"}
+SOCIAL_MEDIA_HOSTS = {
+    "bsky.app",
+    "discord.com",
+    "discord.gg",
+    "facebook.com",
+    "fb.com",
+    "fb.watch",
+    "instagram.com",
+    "line.me",
+    "linkedin.com",
+    "lnkd.in",
+    "pinterest.com",
+    "pin.it",
+    "reddit.com",
+    "redd.it",
+    "snapchat.com",
+    "t.co",
+    "t.me",
+    "telegram.org",
+    "threads.net",
+    "tiktok.com",
+    "twitter.com",
+    "wa.me",
+    "whatsapp.com",
+    "x.com",
+    "youtu.be",
+    "youtube.com",
+}
 CONTENT_MARKERS = {
     "artikel",
     "audio",
@@ -297,7 +325,7 @@ def is_public_website_url(url):
         return False
 
     host = (parsed.hostname or "").strip().lower()
-    if not host or host in BLOCKED_HOSTS or host.endswith(".localhost"):
+    if not host or host in BLOCKED_HOSTS or host.endswith(".localhost") or _is_social_media_host(host):
         return False
 
     try:
@@ -313,6 +341,11 @@ def is_public_website_url(url):
         or address.is_reserved
         or address.is_unspecified
     )
+
+
+def _is_social_media_host(host):
+    host = str(host or "").strip().lower().removeprefix("www.")
+    return any(host == blocked_host or host.endswith(f".{blocked_host}") for blocked_host in SOCIAL_MEDIA_HOSTS)
 
 
 def _build_chat_graph(api_key):
